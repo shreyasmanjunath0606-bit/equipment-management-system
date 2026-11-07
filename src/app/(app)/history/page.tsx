@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { ChevronLeft, ChevronRight, Download, History } from "lucide-react";
 import { getVisiblePlants, requireUser } from "@/lib/auth";
 import { StatusBadge, formatDateTime } from "@/components/status-badge";
 import { historyQuery, parseFilters } from "@/lib/history-query";
+import { Card, EmptyState, Input, Label, PageHeader, Select, Table, buttonClass, tdClass, thClass } from "@/components/ui";
+import AutoSubmit from "@/components/auto-submit";
 import type { StatusType } from "@/lib/types";
 
 const PAGE_SIZE = 50;
@@ -29,57 +32,90 @@ export default async function HistoryPage(props: PageProps<"/history">) {
     equipment: { name: string; tag_code: string } | null; profiles: { name: string } | null;
   };
   const rows = (data ?? []) as unknown as Row[];
-  const pages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
+  const total = count ?? 0;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const base = new URLSearchParams();
   (Object.entries(f) as [string, string][]).forEach(([k, v]) => v && base.set(k, v));
   const link = (p: number) => `?${new URLSearchParams({ ...Object.fromEntries(base), page: String(p) })}`;
+  const from = total ? (page - 1) * PAGE_SIZE + 1 : 0;
+  const to = Math.min(page * PAGE_SIZE, total);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">History</h1>
-        {profile.role !== "worker" && (
-          <a href={`/history/export?${base}`} className="rounded border px-3 py-1 text-sm">Export CSV</a>
+    <div>
+      <PageHeader
+        title="History"
+        description="Every status report, newest first."
+        actions={profile.role !== "worker" && (
+          <a href={`/history/export?${base}`} className={buttonClass("secondary")}><Download className="size-4" /> Export CSV</a>
         )}
-      </div>
-      <form className="flex flex-wrap items-end gap-2 text-sm">
-        <label className="flex flex-col">From<input type="date" name="from" defaultValue={f.from} className="rounded border px-2 py-1" /></label>
-        <label className="flex flex-col">To<input type="date" name="to" defaultValue={f.to} className="rounded border px-2 py-1" /></label>
-        {plants.length > 1 && (
-          <select name="plant" defaultValue={f.plant} className="rounded border px-2 py-1.5">
-            <option value="">All plants</option>
-            {plants.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        )}
-        <select name="status" defaultValue={f.status} className="rounded border px-2 py-1.5">
-          <option value="">Any status</option>
-          {statusTypes.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-        </select>
-        <button className="rounded bg-blue-600 px-4 py-1.5 text-white">Apply</button>
-      </form>
+      />
 
-      <p className="text-sm text-gray-500">{count ?? 0} report(s)</p>
-      <ul className="flex flex-col gap-2">
-        {rows.map((r) => (
-          <li key={r.id} className="rounded-lg border p-3 text-sm">
-            <Link href={`/equipment/${r.equipment_id}`} className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={typeById.get(r.status_type_id)} />
-              <strong>{r.equipment?.name}</strong>
-              <span className="text-gray-500">{r.equipment?.tag_code} · {plantById.get(r.plant_id)?.name}</span>
-            </Link>
-            <div className="text-xs text-gray-500">
-              {formatDateTime(r.reported_at, plantById.get(r.plant_id)?.timezone)} · {r.profiles?.name}
+      <Card className="overflow-hidden">
+        <form className="grid grid-cols-2 gap-3 border-b p-4 md:grid-cols-4">
+          <AutoSubmit />
+          <div><Label htmlFor="from">From</Label><Input id="from" type="date" name="from" defaultValue={f.from} /></div>
+          <div><Label htmlFor="to">To</Label><Input id="to" type="date" name="to" defaultValue={f.to} /></div>
+          {plants.length > 1 && (
+            <div>
+              <Label htmlFor="plant">Plant</Label>
+              <Select id="plant" name="plant" defaultValue={f.plant}>
+                <option value="">All plants</option>
+                {plants.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
             </div>
-            {r.note && <p className="mt-1 whitespace-pre-wrap">{r.note}</p>}
-          </li>
-        ))}
-      </ul>
-      <div className="flex items-center justify-between text-sm">
-        {page > 1 ? <Link href={link(page - 1)}>← Newer</Link> : <span />}
-        <span className="text-gray-500">Page {page} of {pages}</span>
-        {page < pages ? <Link href={link(page + 1)}>Older →</Link> : <span />}
-      </div>
+          )}
+          <div>
+            <Label htmlFor="status">Status</Label>
+            <Select id="status" name="status" defaultValue={f.status}>
+              <option value="">Any status</option>
+              {statusTypes.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </Select>
+          </div>
+          <noscript><button className={buttonClass()}>Apply</button></noscript>
+        </form>
+
+        {rows.length === 0 ? (
+          <EmptyState icon={History} title="No reports match" description="Try widening the date range or clearing filters." />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>When</th>
+                <th className={thClass}>Equipment</th>
+                <th className={thClass}>Status</th>
+                <th className={`${thClass} hidden md:table-cell`}>Reported by</th>
+                <th className={`${thClass} hidden lg:table-cell`}>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="hover:bg-surface-muted/60">
+                  <td className={`${tdClass} whitespace-nowrap text-muted`}>{formatDateTime(r.reported_at, plantById.get(r.plant_id)?.timezone)}</td>
+                  <td className={tdClass}>
+                    <Link href={`/equipment/${r.equipment_id}`} className="font-medium hover:text-primary">{r.equipment?.name}</Link>
+                    <div className="text-xs text-muted"><span className="font-mono">{r.equipment?.tag_code}</span> · {plantById.get(r.plant_id)?.name}</div>
+                  </td>
+                  <td className={tdClass}><StatusBadge status={typeById.get(r.status_type_id)} /></td>
+                  <td className={`${tdClass} hidden md:table-cell`}>{r.profiles?.name ?? "—"}</td>
+                  <td className={`${tdClass} hidden max-w-xs truncate text-muted lg:table-cell`} title={r.note ?? undefined}>{r.note ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+
+        {total > 0 && (
+          <div className="flex items-center justify-between gap-3 border-t px-4 py-3 text-sm">
+            <span className="text-muted">Showing <span className="font-medium text-foreground">{from}–{to}</span> of <span className="font-medium text-foreground">{total}</span></span>
+            <div className="flex items-center gap-2">
+              {page > 1 && <Link href={link(page - 1)} className={buttonClass("secondary", "sm")} aria-label="Newer"><ChevronLeft className="size-4" /></Link>}
+              <span className="tabular-nums text-muted">{page} / {pages}</span>
+              {page < pages && <Link href={link(page + 1)} className={buttonClass("secondary", "sm")} aria-label="Older"><ChevronRight className="size-4" /></Link>}
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

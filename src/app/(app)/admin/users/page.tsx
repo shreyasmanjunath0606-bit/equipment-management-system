@@ -1,5 +1,8 @@
 import { revalidatePath } from "next/cache";
+import { Mail, Send, UserCheck, UserPlus, UserX } from "lucide-react";
 import { requireRole } from "@/lib/auth";
+import { Card, CardHeader, Input, Label, PageHeader, Pill, Select } from "@/components/ui";
+import { ConfirmButton, Modal, SubmitButton } from "@/components/form-controls";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 async function inviteUser(formData: FormData) {
@@ -54,62 +57,112 @@ export default async function UsersAdmin() {
   const byUser = new Map<string, Set<string>>();
   (ups ?? []).forEach((u) => byUser.set(u.user_id, (byUser.get(u.user_id) ?? new Set()).add(u.plant_id)));
 
+  const ROLE_STYLE: Record<string, string> = {
+    admin: "border-violet-300/50 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+    manager: "border-primary/30 bg-primary-soft text-primary",
+    worker: "",
+  };
+  const checkbox = "size-4 rounded border accent-[var(--primary)]";
+  const list = users ?? [];
+  const invites = pending ?? [];
+
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-bold">Users</h1>
+      <PageHeader
+        title="Users"
+        description={`${list.filter((u) => u.active).length} active · ${invites.length} pending invite${invites.length === 1 ? "" : "s"}`}
+        actions={
+          <Modal trigger={<><UserPlus className="size-4" /> Invite person</>} title="Invite a person" description="They'll get an email link to set a password.">
+            <form action={inviteUser} className="flex flex-col gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div><Label htmlFor="name">Full name</Label><Input id="name" name="name" required /></div>
+                <div><Label htmlFor="email">Email</Label><Input id="email" name="email" type="email" required /></div>
+              </div>
+              <div>
+                <Label htmlFor="role">Role</Label>
+                <Select id="role" name="role">
+                  <option value="worker">Worker — reports status</option>
+                  <option value="manager">Manager — dashboard, alerts, equipment</option>
+                  <option value="admin">Admin — all plants, users</option>
+                </Select>
+              </div>
+              <fieldset>
+                <legend className="mb-1.5 text-xs font-medium text-muted">Plants</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {(plants ?? []).map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-surface-muted">
+                      <input type="checkbox" name="plant_ids" value={p.id} className={checkbox} /> {p.name}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="flex justify-end"><SubmitButton pendingText="Sending…"><Send className="size-4" /> Send invite</SubmitButton></div>
+            </form>
+          </Modal>
+        }
+      />
 
-      <form action={inviteUser} className="flex flex-col gap-2 rounded-lg border p-3">
-        <strong>Invite a person</strong>
-        <div className="flex flex-wrap gap-2">
-          <input name="name" required placeholder="Full name" className="rounded border px-3 py-2" />
-          <input name="email" type="email" required placeholder="Email" className="rounded border px-3 py-2" />
-          <select name="role" className="rounded border px-3 py-2">
-            <option value="worker">Worker</option>
-            <option value="manager">Manager</option>
-            <option value="admin">Admin (all plants)</option>
-          </select>
-        </div>
-        <div className="flex flex-wrap gap-3 text-sm">
-          {(plants ?? []).map((p) => (
-            <label key={p.id} className="flex items-center gap-1"><input type="checkbox" name="plant_ids" value={p.id} /> {p.name}</label>
-          ))}
-        </div>
-        <button className="self-start rounded bg-blue-600 px-4 py-2 text-white">Send invite</button>
-      </form>
-
-      {(pending ?? []).length > 0 && (
-        <p className="text-sm text-gray-500">
-          Pending invites: {(pending ?? []).map((p) => p.email).join(", ")}
-        </p>
+      {invites.length > 0 && (
+        <Card>
+          <CardHeader title="Pending invites" />
+          <ul className="flex flex-wrap gap-2 p-4">
+            {invites.map((p) => (
+              <li key={p.id}><Pill><Mail className="size-3" /> {p.email} <span className="capitalize text-muted">· {p.role}</span></Pill></li>
+            ))}
+          </ul>
+        </Card>
       )}
 
-      <ul className="flex flex-col gap-2">
-        {(users ?? []).map((u) => (
-          <li key={u.id} className={`rounded-lg border p-3 ${u.active ? "" : "opacity-60"}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span><strong>{u.name}</strong> <span className="text-sm text-gray-500">{u.email} · {u.role}{!u.active && " · deactivated"}</span></span>
+      <Card className="overflow-hidden">
+        <ul className="divide-y">
+          {list.map((u) => (
+            <li key={u.id} className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center ${u.active ? "" : "bg-surface-muted/40"}`}>
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span className={`flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${u.active ? "bg-primary-soft text-primary" : "bg-surface-muted text-muted"}`}>
+                  {(u.name || u.email).split(/\s+/).map((s: string) => s[0]).slice(0, 2).join("").toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <p className="flex flex-wrap items-center gap-2 font-medium">
+                    {u.name}
+                    <Pill className={`capitalize ${ROLE_STYLE[u.role] ?? ""}`}>{u.role}</Pill>
+                    {!u.active && <Pill className="border-danger/30 bg-danger-soft text-danger">Deactivated</Pill>}
+                    {u.id === user.id && <span className="text-xs text-muted">(you)</span>}
+                  </p>
+                  <p className="truncate text-xs text-muted">{u.email}</p>
+                </div>
+              </div>
+
+              {u.role !== "admin" ? (
+                <form action={setUserPlants} className="flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="id" value={u.id} />
+                  {(plants ?? []).map((p) => (
+                    <label key={p.id} className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-surface-muted has-[:checked]:border-primary/40 has-[:checked]:bg-primary-soft has-[:checked]:text-primary">
+                      <input type="checkbox" name="plant_ids" value={p.id} defaultChecked={byUser.get(u.id)?.has(p.id)} className="size-3.5 accent-[var(--primary)]" /> {p.name}
+                    </label>
+                  ))}
+                  <SubmitButton variant="ghost" size="sm" pendingText="Saving…">Save</SubmitButton>
+                </form>
+              ) : (
+                <span className="text-xs text-muted">All plants</span>
+              )}
+
               {u.id !== user.id && (
                 <form action={setUserActive}>
                   <input type="hidden" name="id" value={u.id} />
                   <input type="hidden" name="active" value={String(!u.active)} />
-                  <button className="text-sm underline">{u.active ? "Deactivate" : "Reactivate"}</button>
+                  {u.active ? (
+                    <ConfirmButton title={`Deactivate ${u.name}?`} description="They will be signed out everywhere and can't sign in until reactivated." confirmLabel="Deactivate">
+                      <UserX className="size-3.5" /> Deactivate
+                    </ConfirmButton>
+                  ) : (
+                    <SubmitButton variant="secondary" size="sm"><UserCheck className="size-3.5" /> Reactivate</SubmitButton>
+                  )}
                 </form>
               )}
-            </div>
-            {u.role !== "admin" && (
-              <form action={setUserPlants} className="mt-2 flex flex-wrap items-center gap-3 text-sm">
-                <input type="hidden" name="id" value={u.id} />
-                {(plants ?? []).map((p) => (
-                  <label key={p.id} className="flex items-center gap-1">
-                    <input type="checkbox" name="plant_ids" value={p.id} defaultChecked={byUser.get(u.id)?.has(p.id)} /> {p.name}
-                  </label>
-                ))}
-                <button className="underline">Save plants</button>
-              </form>
-            )}
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </div>
   );
 }

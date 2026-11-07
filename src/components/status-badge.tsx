@@ -1,17 +1,45 @@
 import type { StatusType } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
-export function StatusBadge({ status }: { status: StatusType | undefined | null }) {
+/**
+ * Status colours come from the database, so render them as a soft tint + dot
+ * (readable on any colour) instead of white text on a solid block.
+ */
+export function StatusBadge({ status, className }: { status: StatusType | undefined | null; className?: string }) {
   if (!status) {
-    return <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-700">No status yet</span>;
+    return (
+      <span className={cn("inline-flex items-center gap-1.5 rounded-full border bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-muted", className)}>
+        <span className="size-1.5 rounded-full bg-muted" />
+        No status yet
+      </span>
+    );
   }
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-white"
-      style={{ backgroundColor: status.color }}
+      className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium text-foreground", className)}
+      style={{
+        backgroundColor: `color-mix(in srgb, ${status.color} 14%, transparent)`,
+        borderColor: `color-mix(in srgb, ${status.color} 35%, transparent)`,
+      }}
     >
+      <span className="size-1.5 rounded-full" style={{ backgroundColor: status.color }} />
       {status.label}
     </span>
   );
+}
+
+/** Black or white text, whichever reads better on the given hex colour. */
+export function readableText(hex: string): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  if (Number.isNaN(n)) return "#fff";
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.4 ? "#0f172a" : "#ffffff";
 }
 
 export function timeAgo(iso: string | null): string {

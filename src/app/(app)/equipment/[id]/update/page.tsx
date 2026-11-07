@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { ShieldAlert } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { Card, EmptyState, buttonClass } from "@/components/ui";
 import type { StatusType } from "@/lib/types";
 import StatusForm from "./status-form";
 
@@ -16,13 +18,14 @@ export default async function UpdatePage(props: PageProps<"/equipment/[id]/updat
 
   if (!eq) {
     return (
-      <div className="mx-auto max-w-md p-4">
-        <h1 className="text-lg font-bold">Equipment not available</h1>
-        <p className="text-sm text-gray-600">
-          This machine doesn&apos;t exist or isn&apos;t in a plant you&apos;re assigned to. Ask your manager if you need access.
-        </p>
-        <Link href="/equipment" className="text-blue-600 underline">Back to equipment</Link>
-      </div>
+      <Card className="mx-auto max-w-md">
+        <EmptyState
+          icon={ShieldAlert}
+          title="Equipment not available"
+          description="This machine doesn't exist or isn't in a plant you're assigned to. Ask your manager if you need access."
+          action={<Link href="/equipment" className={buttonClass("secondary")}>Back to equipment</Link>}
+        />
+      </Card>
     );
   }
   if (!eq.is_active) notFound();

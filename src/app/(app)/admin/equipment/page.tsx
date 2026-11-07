@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
+import { Archive, ArchiveRestore, Building2, Plus, QrCode, Upload, Wrench } from "lucide-react";
 import { getVisiblePlants, requireRole } from "@/lib/auth";
+import { Card, EmptyState, Input, Label, PageHeader, Pill, Select, Table, Textarea, buttonClass, tdClass, thClass } from "@/components/ui";
+import { ConfirmButton, Modal, SubmitButton } from "@/components/form-controls";
 
 async function createEquipment(formData: FormData) {
   "use server";
@@ -47,53 +50,98 @@ export default async function EquipmentAdmin() {
     .limit(100);
   const plantName = new Map(plants.map((p) => [p.id, p.name]));
 
+  const list = items ?? [];
+  const plantSelect = (
+    <Select name="plant_id" required>
+      {plants.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+    </Select>
+  );
+
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-bold">Manage equipment</h1>
-      {plants.length === 0 && <p className="text-gray-500">No plants yet. An admin must create a plant first.</p>}
-
-      <form action={createEquipment} className="grid gap-2 sm:grid-cols-3">
-        <select name="plant_id" required className="rounded border px-3 py-2">
-          {plants.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <input name="tag_code" required placeholder="Tag code (unique)" className="rounded border px-3 py-2" />
-        <input name="name" required placeholder="Name" className="rounded border px-3 py-2" />
-        <input name="type" placeholder="Type (e.g. CNC lathe)" className="rounded border px-3 py-2" />
-        <input name="manufacturer" placeholder="Manufacturer" className="rounded border px-3 py-2" />
-        <input name="model" placeholder="Model" className="rounded border px-3 py-2" />
-        <input name="serial_no" placeholder="Serial no." className="rounded border px-3 py-2" />
-        <button className="rounded bg-blue-600 px-4 py-2 text-white sm:col-span-2">Add equipment</button>
-      </form>
-
-      <details>
-        <summary className="cursor-pointer text-sm font-semibold">Bulk import (paste lines: tag,name,type)</summary>
-        <form action={importEquipment} className="mt-2 flex flex-col gap-2">
-          <select name="plant_id" required className="rounded border px-3 py-2">
-            {plants.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <textarea name="csv" rows={5} placeholder={"CNC-01,CNC Lathe 1,Lathe\nPRS-07,Press 7,Press"} className="rounded border px-3 py-2 font-mono text-sm" />
-          <button className="self-start rounded bg-blue-600 px-4 py-2 text-white">Import</button>
-        </form>
-      </details>
-
-      <ul className="flex flex-col gap-2">
-        {(items ?? []).map((e) => (
-          <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
-            <Link href={`/equipment/${e.id}`}>
-              <strong>{e.name}</strong>{" "}
-              <span className="text-sm text-gray-500">{e.tag_code} · {plantName.get(e.plant_id)}{!e.is_active && " · retired"}</span>
-            </Link>
-            <span className="flex gap-3 text-sm">
-              <Link href={`/equipment/${e.id}/qr`} className="underline">QR</Link>
-              <form action={setActive}>
-                <input type="hidden" name="id" value={e.id} />
-                <input type="hidden" name="active" value={String(!e.is_active)} />
-                <button className="underline">{e.is_active ? "Retire" : "Restore"}</button>
+    <div>
+      <PageHeader
+        title="Manage equipment"
+        description={`${list.filter((e) => e.is_active).length} active · ${list.filter((e) => !e.is_active).length} retired (latest 100)`}
+        actions={plants.length > 0 && (
+          <>
+            <Modal triggerVariant="secondary" trigger={<><Upload className="size-4" /> Bulk import</>} title="Bulk import" description="Paste one machine per line: tag,name,type (max 500).">
+              <form action={importEquipment} className="flex flex-col gap-4">
+                <div><Label>Plant</Label>{plantSelect}</div>
+                <div>
+                  <Label>Equipment lines</Label>
+                  <Textarea name="csv" rows={7} placeholder={"CNC-01,CNC Lathe 1,Lathe\nPRS-07,Press 7,Press"} className="font-mono text-xs" />
+                </div>
+                <div className="flex justify-end"><SubmitButton pendingText="Importing…">Import</SubmitButton></div>
               </form>
-            </span>
-          </li>
-        ))}
-      </ul>
+            </Modal>
+            <Modal trigger={<><Plus className="size-4" /> Add equipment</>} title="Add equipment" description="Tag codes must be unique within the system.">
+              <form action={createEquipment} className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2"><Label>Plant *</Label>{plantSelect}</div>
+                <div><Label htmlFor="tag_code">Tag code *</Label><Input id="tag_code" name="tag_code" required placeholder="CNC-01" className="font-mono" /></div>
+                <div><Label htmlFor="name">Name *</Label><Input id="name" name="name" required placeholder="CNC Lathe 1" /></div>
+                <div><Label htmlFor="type">Type</Label><Input id="type" name="type" placeholder="Lathe" /></div>
+                <div><Label htmlFor="manufacturer">Manufacturer</Label><Input id="manufacturer" name="manufacturer" /></div>
+                <div><Label htmlFor="model">Model</Label><Input id="model" name="model" /></div>
+                <div><Label htmlFor="serial_no">Serial no.</Label><Input id="serial_no" name="serial_no" /></div>
+                <div className="flex justify-end sm:col-span-2"><SubmitButton pendingText="Adding…">Add equipment</SubmitButton></div>
+              </form>
+            </Modal>
+          </>
+        )}
+      />
+
+      <Card className="overflow-hidden">
+        {plants.length === 0 ? (
+          <EmptyState icon={Building2} title="No plants yet" description="An admin must create a plant before equipment can be added." />
+        ) : list.length === 0 ? (
+          <EmptyState icon={Wrench} title="No equipment yet" description="Add your first machine or bulk-import a list." />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>Equipment</th>
+                <th className={thClass}>Tag</th>
+                <th className={`${thClass} hidden sm:table-cell`}>Plant</th>
+                <th className={thClass}>State</th>
+                <th className={`${thClass} text-right`}><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((e) => (
+                <tr key={e.id} className={e.is_active ? "hover:bg-surface-muted/60" : "bg-surface-muted/30 text-muted"}>
+                  <td className={tdClass}>
+                    <Link href={`/equipment/${e.id}`} className="font-medium hover:text-primary">{e.name}</Link>
+                    {e.type && <div className="text-xs text-muted">{e.type}</div>}
+                  </td>
+                  <td className={`${tdClass} font-mono text-xs`}>{e.tag_code}</td>
+                  <td className={`${tdClass} hidden sm:table-cell`}>{plantName.get(e.plant_id)}</td>
+                  <td className={tdClass}>
+                    {e.is_active
+                      ? <Pill className="border-success/30 bg-success/10 text-success">Active</Pill>
+                      : <Pill>Retired</Pill>}
+                  </td>
+                  <td className={tdClass}>
+                    <div className="flex justify-end gap-2">
+                      <Link href={`/equipment/${e.id}/qr`} className={buttonClass("ghost", "sm")} aria-label={`QR code for ${e.name}`}><QrCode className="size-4" /></Link>
+                      <form action={setActive}>
+                        <input type="hidden" name="id" value={e.id} />
+                        <input type="hidden" name="active" value={String(!e.is_active)} />
+                        {e.is_active ? (
+                          <ConfirmButton title={`Retire ${e.name}?`} description="It will be hidden from the equipment list. Its history stays readable and you can restore it later." confirmLabel="Retire">
+                            <Archive className="size-3.5" /> Retire
+                          </ConfirmButton>
+                        ) : (
+                          <SubmitButton variant="secondary" size="sm"><ArchiveRestore className="size-3.5" /> Restore</SubmitButton>
+                        )}
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
     </div>
   );
 }

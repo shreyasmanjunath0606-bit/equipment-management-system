@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CloudUpload, WifiOff } from "lucide-react";
 import { flushQueue, pendingCount } from "@/lib/offline-queue";
 
 /** Delivers reports saved while offline, whenever the phone gets signal again. */
@@ -29,7 +30,8 @@ export default function OfflineSync({ userId }: { userId: string }) {
 
   if (online && pending === 0) return null;
   return (
-    <div className="bg-amber-100 px-4 py-2 text-center text-sm text-amber-900">
+    <div role="status" className="flex items-center justify-center gap-2 border-t border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      {online ? <CloudUpload className="size-4 shrink-0" /> : <WifiOff className="size-4 shrink-0" />}
       {!online ? "You are offline. " : ""}
       {pending > 0 ? `${pending} report(s) waiting to be sent — they will upload automatically.` : "Reports will be saved and sent when you reconnect."}
     </div>
