@@ -179,6 +179,8 @@ Roughly 4–5 weeks of build for a solo developer, plus pilot.
 - Automated tests (RLS tests, Playwright E2E)
 - Deployment to Vercel, backups/PITR check, tighter photo-read policy (currently any active user with the path)
 
+**Flutter migration (started 2026-11-07):** the portal is being rewritten as a Flutter app in `flutter_app/` (Android, iOS, Web) on the same Supabase backend. The Next.js site stays live until the Flutter app reaches parity, then it is retired. New features (scheduled Excel checks, equipment codes, KPI graphs, findings) are planned in [docs/plans/new-features-plan.md](docs/plans/new-features-plan.md).
+
 **To run locally**
 1. Put the service_role key in `.env.local` (`SUPABASE_SERVICE_ROLE_KEY`).
 2. In Supabase: Authentication → disable public sign-ups; add `http://localhost:3000/auth/confirm` to redirect URLs.
