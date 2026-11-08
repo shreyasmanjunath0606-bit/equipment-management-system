@@ -70,12 +70,12 @@ void main() {
     test('every tab is a PM check with its frequency read from the sheet', () {
       expect(wb.checks, hasLength(18));
       expect(wb.skippedTabs, isEmpty);
-      expect(wb.checks.every((c) => c.ok), isTrue, reason: wb.checks.expand((c) => c.problems).join('; '));
+      expect(wb.checks.every((c) => c.ok), isTrue, reason: wb.checks.expand((c) => c.allProblems).join('; '));
       final freq = wb.checks.map((c) => c.schedule!.label).toList();
       expect(freq.where((f) => f == 'Monthly'), hasLength(9));
       expect(freq.where((f) => f == 'Every 4 months'), hasLength(5));
       expect(freq.where((f) => f == 'Half-yearly'), hasLength(4));
-      expect(wb.checks.expand((c) => c.warnings), isEmpty);
+      expect(wb.checks.expand((c) => c.allWarnings), isEmpty);
     });
 
     test('every tab keeps its own title (row 1 banner)', () {
@@ -190,7 +190,7 @@ void main() {
         for (final c in changed) {
           expect(c.schedule, schedule);
           // Tab names still say "1M": flagged as a warning, the FREQUENCY cell wins.
-          expect(c.warnings.single, contains('using the cell'));
+          expect(c.allWarnings.single, contains('using the cell'));
         }
         expect(v.checks.map((c) => c.points.length).toList(), wb.checks.map((c) => c.points.length).toList());
         expect(v.pictures.length, wb.pictures.length);

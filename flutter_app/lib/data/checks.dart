@@ -82,7 +82,11 @@ class CheckTask {
     this.pointCount = 0,
     this.verifiedAt,
     this.verifiedByName,
+    this.assignedTo,
   });
+
+  /// Worker who must do this check (the equipment's assigned worker); null = nobody assigned.
+  final String? assignedTo;
 
   final String id, itemId, equipmentId, plantId, title, equipmentName, equipmentCode;
   final String? description, completedByName, note, pmType, verifiedByName;
@@ -104,7 +108,7 @@ class CheckTask {
   bool isOverdue(DateTime today) => status == TaskStatus.pending && dueDate.isBefore(today) && !windowEnd.isBefore(today);
 
   static const select =
-      'id,check_item_id,equipment_id,plant_id,due_date,window_end,status,completed_at,note,verified_at,'
+      'id,check_item_id,equipment_id,plant_id,due_date,window_end,status,completed_at,note,verified_at,assigned_to,'
       'check_items(title,description,frequency,interval_count,pm_type,check_points(count)),equipment(name,tag_code),'
       'completer:profiles!check_tasks_completed_by_fkey(name),verifier:profiles!check_tasks_verified_by_fkey(name)';
 
@@ -132,6 +136,7 @@ class CheckTask {
       pointCount: ((item['check_points'] as List?)?.firstOrNull as Json?)?['count'] as int? ?? 0,
       verifiedAt: j['verified_at'] == null ? null : DateTime.parse(j['verified_at'] as String).toLocal(),
       verifiedByName: (j['verifier'] as Json?)?['name'] as String?,
+      assignedTo: j['assigned_to'] as String?,
     );
   }
 
@@ -156,6 +161,7 @@ class CheckTask {
         pointCount: pointCount,
         verifiedAt: verifiedAt,
         verifiedByName: verifiedByName,
+        assignedTo: assignedTo,
       );
 }
 

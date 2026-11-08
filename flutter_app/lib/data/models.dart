@@ -123,13 +123,17 @@ class Equipment {
     this.model,
     this.serialNo,
     this.installDate,
+    this.assignedWorker,
   });
   final String id, tagCode, name, plantId;
   final String? type, areaId, manufacturer, model, serialNo;
+
+  /// The one worker who looks after this equipment and does all its checks.
+  final String? assignedWorker;
   final DateTime? installDate;
   final bool isActive;
 
-  static const columns = 'id,tag_code,name,type,plant_id,area_id,manufacturer,model,serial_no,install_date,is_active';
+  static const columns = 'id,tag_code,name,type,plant_id,area_id,manufacturer,model,serial_no,install_date,is_active,assigned_worker';
 
   factory Equipment.fromJson(Json j) => Equipment(
         id: j['id'] as String,
@@ -143,6 +147,7 @@ class Equipment {
         serialNo: j['serial_no'] as String?,
         installDate: j['install_date'] == null ? null : DateTime.parse(j['install_date'] as String),
         isActive: j['is_active'] as bool? ?? true,
+        assignedWorker: j['assigned_worker'] as String?,
       );
 }
 
