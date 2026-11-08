@@ -18,6 +18,7 @@ import '../features/findings/findings_screen.dart';
 import '../features/history/history_screen.dart';
 import '../features/notifications/notifications_screen.dart';
 import '../features/auth/set_password_screen.dart';
+import '../features/checks/check_run_screen.dart';
 import '../features/checks/my_checks_screen.dart';
 import '../features/dashboard/dashboard_screen.dart';
 import '../features/shell/app_shell.dart';
@@ -77,6 +78,7 @@ GoRouter buildRouter(SessionController session, {String initialLocation = '/'}) 
         routes: [
           GoRoute(path: '/dashboard', builder: (_, s) => DashboardScreen(plantId: s.uri.queryParameters['plant'])),
           GoRoute(path: '/checks', builder: (_, _) => const MyChecksScreen()),
+          GoRoute(path: '/checks/task/:id', builder: (_, s) => CheckRunScreen(taskId: s.pathParameters['id']!)),
           GoRoute(path: '/more', builder: (_, _) => const MoreScreen()),
           GoRoute(
             path: '/equipment',

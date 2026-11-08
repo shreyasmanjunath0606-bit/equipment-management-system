@@ -16,8 +16,10 @@ import '../../core/widgets/status.dart';
 import '../../data/checks.dart';
 import '../../data/excel_sheets.dart';
 import '../../data/models.dart';
+import '../../data/pm_workbook.dart';
 import '../../data/providers.dart';
 import '../../data/session.dart';
+import 'pm_review_page.dart';
 
 const _xlsxMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -30,10 +32,11 @@ class CheckSheet {
 }
 
 class CheckItem {
-  CheckItem({required this.id, required this.title, required this.frequency, required this.startDate, required this.active, required this.equipmentName, required this.equipmentCode, this.description});
+  CheckItem({required this.id, required this.title, required this.frequency, required this.startDate, required this.active, required this.equipmentName, required this.equipmentCode, this.description, this.interval = 1, this.points = 0, this.sourceTab});
   final String id, title, equipmentName, equipmentCode;
-  final String? description;
+  final String? description, sourceTab;
   final CheckFrequency frequency;
+  final int interval, points;
   final DateTime startDate;
   final bool active;
 }
@@ -65,7 +68,7 @@ final checkItemsProvider = FutureProvider.family<List<CheckItem>, String>((ref, 
   final rows = await ref
       .watch(supabaseProvider)
       .from('check_items')
-      .select('id,title,description,frequency,start_date,active,equipment(name,tag_code)')
+      .select('id,title,description,frequency,interval_count,source_tab,start_date,active,equipment(name,tag_code),check_points(count)')
       .eq('sheet_id', sheetId)
       .order('created_at');
   return [
@@ -79,6 +82,9 @@ final checkItemsProvider = FutureProvider.family<List<CheckItem>, String>((ref, 
         active: r['active'] as bool,
         equipmentName: (r['equipment'] as Json?)?['name'] as String? ?? '',
         equipmentCode: (r['equipment'] as Json?)?['tag_code'] as String? ?? '',
+        interval: (r['interval_count'] as num?)?.toInt() ?? 1,
+        sourceTab: r['source_tab'] as String?,
+        points: ((r['check_points'] as List?)?.firstOrNull as Json?)?['count'] as int? ?? 0,
       ),
   ];
 });
@@ -110,6 +116,31 @@ class _CheckSheetsScreenState extends ConsumerState<CheckSheetsScreen> {
     setState(() => _loadingFile = true);
     try {
       final bytes = await file.readAsBytes();
+      final plantObj = plants.firstWhere((p) => p.id == plant);
+
+      // PM workbooks (one tab per check, FREQUENCY cell on each tab) get their own review page.
+      PmWorkbook? pm;
+      try {
+        pm = parsePmWorkbook(bytes);
+      } catch (_) {}
+      if (pm != null) {
+        final rows = await ref.read(supabaseProvider).from('equipment').select('id,name,tag_code').eq('plant_id', plant).eq('is_active', true).order('name');
+        final equipment = [for (final r in rows) EquipmentCandidate(id: r['id'] as String, name: r['name'] as String, code: r['tag_code'] as String)];
+        if (!mounted) return;
+        setState(() => _loadingFile = false);
+        final result = await Navigator.of(context).push<String>(MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => PmReviewPage(plant: plantObj, fileName: file.name, bytes: bytes, workbook: pm!, equipment: equipment),
+        ));
+        if (result != null && mounted) {
+          ref.invalidate(checkSheetsProvider);
+          ref.invalidate(checkTasksProvider);
+          ref.invalidate(checkStatsProvider);
+          showToast(context, result);
+        }
+        return;
+      }
+
       final codes = await ref.read(supabaseProvider).from('equipment').select('tag_code').eq('plant_id', plant).eq('is_active', true);
       final known = {for (final r in codes) (r['tag_code'] as String).toUpperCase()};
       final parsed = parseCheckSheet(bytes, knownCodes: known);
@@ -117,7 +148,7 @@ class _CheckSheetsScreenState extends ConsumerState<CheckSheetsScreen> {
       setState(() => _loadingFile = false);
       final result = await Navigator.of(context).push<String>(MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _ReviewSheetPage(plant: plants.firstWhere((p) => p.id == plant), fileName: file.name, bytes: bytes, parsed: parsed),
+        builder: (_) => _ReviewSheetPage(plant: plantObj, fileName: file.name, bytes: bytes, parsed: parsed),
       ));
       if (result != null && mounted) {
         ref.invalidate(checkSheetsProvider);
@@ -145,7 +176,7 @@ class _CheckSheetsScreenState extends ConsumerState<CheckSheetsScreen> {
       children: [
         PageHeader(
           title: 'Check sheets',
-          subtitle: 'Upload daily / weekly / monthly check lists from Excel. Checks repeat automatically.',
+          subtitle: 'Upload PM check sheet workbooks or simple check lists from Excel. The frequency on each sheet decides how often it repeats.',
           actions: [
             if (plants.length > 1) PlantPicker(plants: plants, value: _plant, onChanged: (v) => setState(() => _plant = v)),
             OutlinedButton.icon(
@@ -214,9 +245,9 @@ class _HowItWorks extends StatelessWidget {
           ]),
         );
     final steps = [
-      step(1, 'Fill the template', 'Equipment Code, Check Item, Frequency, Start Date'),
-      step(2, 'Upload & review', 'We flag unknown codes and bad dates before importing'),
-      step(3, 'Checks repeat', 'Weekly every 7 days, monthly on the same date'),
+      step(1, 'Upload the workbook', 'PM sheets as they are (one tab per check), or the simple template'),
+      step(2, 'Review', "Each tab's FREQUENCY is read for you — daily, weekly, monthly, 4-monthly, half-yearly"),
+      step(3, 'Checks repeat', 'Workers get every check point, picture and safety note; the in-charge verifies'),
     ];
     return Card(
       color: p.surface,
@@ -258,7 +289,34 @@ class _SheetCard extends ConsumerWidget {
           .order('due_date', ascending: false)
           .limit(10000);
       final tasks = rows.map(CheckTask.fromJson).toList();
-      await _shareBytes(buildCompletionsReport(tasks), '${sheet.title}-completions-${isoDate(today())}.xlsx', _xlsxMime);
+      final points = <PointResultRow>[];
+      final done = [for (final t in tasks) if (t.isPm && t.isDone) t.id];
+      for (var i = 0; i < done.length; i += 200) {
+        final res = await ref
+            .read(supabaseProvider)
+            .from('check_point_results')
+            .select('check_task_id,check_point_id,result,note,finding_id,findings(status),check_points(position,sl_no,check_point)')
+            .inFilter('check_task_id', done.sublist(i, (i + 200).clamp(0, done.length)));
+        for (final r in res) {
+          final cp = r['check_points'] as Json?;
+          final result = PointResult.parse(r['result'] as String?);
+          if (cp == null || result == null) continue;
+          points.add((
+            taskId: r['check_task_id'] as String,
+            position: (cp['position'] as num).toInt(),
+            slNo: cp['sl_no'] as String?,
+            checkPoint: cp['check_point'] as String,
+            result: RecordedResult(
+              pointId: r['check_point_id'] as String,
+              result: result,
+              note: r['note'] as String?,
+              findingId: r['finding_id'] as String?,
+              findingResolved: (r['findings'] as Json?)?['status'] == 'resolved',
+            ),
+          ));
+        }
+      }
+      await _shareBytes(buildCompletionsReport(tasks, points: points), '${sheet.title}-completions-${isoDate(today())}.xlsx', _xlsxMime);
     } catch (_) {
       if (context.mounted) showToast(context, 'Export failed — check your connection');
     }
@@ -357,7 +415,12 @@ class _ItemsSheet extends ConsumerWidget {
                 contentPadding: const EdgeInsets.symmetric(horizontal: Space.xl),
                 value: it.active,
                 title: Text(it.title),
-                subtitle: Text('${it.equipmentName} (${it.equipmentCode}) · ${it.frequency.label} from ${formatDate(it.startDate)}'),
+                subtitle: Text([
+                  '${it.equipmentName} (${it.equipmentCode})',
+                  '${frequencyLabel(it.frequency, it.interval)} from ${formatDate(it.startDate)}',
+                  if (it.points > 0) '${it.points} points',
+                  if (it.sourceTab != null) 'sheet “${it.sourceTab}”',
+                ].join(' · ')),
                 onChanged: (v) async {
                   try {
                     await ref.read(supabaseProvider).from('check_items').update({'active': v}).eq('id', it.id);
@@ -493,6 +556,7 @@ class _ReviewSheetPageState extends ConsumerState<_ReviewSheetPage> {
               child: SafeArea(
                 top: false,
                 child: Center(
+                  heightFactor: 1,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 880),
                     child: SizedBox(
