@@ -32,7 +32,9 @@ const _admin = {Role.admin};
 
 const navItems = <NavItem>[
   NavItem(path: '/dashboard', label: 'Dashboard', icon: Icons.space_dashboard_outlined, selectedIcon: Icons.space_dashboard_rounded, roles: _mgr, mobileTab: true),
-  NavItem(path: '/checks', label: 'My checks', icon: Icons.checklist_rounded, selectedIcon: Icons.checklist_rounded, roles: _all, mobileTab: true),
+  // Workers complete checks; managers and admins get a read-only overview + verification.
+  NavItem(path: '/checks', label: 'My checks', icon: Icons.checklist_rounded, selectedIcon: Icons.checklist_rounded, roles: {Role.worker}, mobileTab: true),
+  NavItem(path: '/checks', label: 'Checks', icon: Icons.fact_check_outlined, selectedIcon: Icons.fact_check_rounded, roles: _mgr, mobileTab: true),
   NavItem(path: '/scan', label: 'Scan', icon: Icons.qr_code_scanner_rounded, selectedIcon: Icons.qr_code_scanner_rounded, roles: _all, mobileTab: true),
   NavItem(path: '/equipment', label: 'Equipment', icon: Icons.precision_manufacturing_outlined, selectedIcon: Icons.precision_manufacturing_rounded, roles: _all, mobileTab: true),
   NavItem(path: '/findings', label: 'Findings', icon: Icons.report_problem_outlined, selectedIcon: Icons.report_problem_rounded, roles: _all),

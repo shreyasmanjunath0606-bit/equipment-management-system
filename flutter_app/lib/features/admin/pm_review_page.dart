@@ -32,13 +32,21 @@ class PmReviewPage extends ConsumerStatefulWidget {
 
 class _PmReviewPageState extends ConsumerState<PmReviewPage> {
   late final _title = TextEditingController(text: widget.fileName.replaceAll(RegExp(r'\.xlsx$', caseSensitive: false), ''));
-  late String? _equipment = suggestEquipment(
+  /// Worked out once, before the manager touches the picker.
+  late final String? _suggestion = suggestEquipment(
     fileName: widget.fileName,
     equipmentLabel: widget.workbook.equipmentLabel,
     equipmentNo: widget.workbook.equipmentNo,
     equipment: widget.equipment,
   );
-  late final bool _suggested = _equipment != null;
+  late String? _equipment = _suggestion;
+  bool get _suggested => _suggestion != null && _equipment == _suggestion;
+
+  /// "PSW ALP GUN NO C", as written on the sheets.
+  String? get _sheetEquipment {
+    final s = [wb.equipmentLabel, wb.equipmentNo].nonNulls.join(' ').trim();
+    return s.isEmpty ? null : s;
+  }
   bool _busy = false;
   String? _progress, _error;
 
@@ -162,9 +170,11 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
                   enableFilter: true,
                   requestFocusOnTap: true,
                   label: const Text('Equipment this workbook is for'),
-                  helperText: _equipment == null
-                      ? 'Choose the equipment — every sheet in the workbook is scheduled for it'
-                      : (_suggested ? 'Matched from the file name and sheet header — change it if wrong' : null),
+                  helperText: _suggested
+                      ? 'Matched “${_sheetEquipment ?? widget.fileName}” from the sheet header — change it if wrong'
+                      : (_suggestion == null && _sheetEquipment != null
+                          ? 'No equipment here matches “$_sheetEquipment” — pick it, or add it under Equipment first'
+                          : 'Every sheet in the workbook is scheduled for this equipment'),
                   errorText: widget.equipment.isEmpty ? 'No active equipment in this plant yet' : null,
                   dropdownMenuEntries: [for (final e in widget.equipment) DropdownMenuEntry(value: e.id, label: '${e.name} · ${e.code}')],
                   onSelected: (v) => setState(() => _equipment = v),

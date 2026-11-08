@@ -141,14 +141,15 @@ class _CheckRunScreenState extends ConsumerState<CheckRunScreen> {
           _seed(d);
           final t = d.task;
           final future = t.dueDate.isAfter(today());
-          final editable = !t.isVerified && !future && (!t.isDone || _editing);
+          // Only workers record results; managers / admins (the in-charge) only verify.
+          final editable = role == Role.worker && !t.isVerified && !future && (!t.isDone || _editing);
           return PageBody(
             maxWidth: 880,
             onRefresh: () async => ref.invalidate(pmTaskDetailProvider(widget.taskId)),
             children: [
               _HeaderCard(d: d),
               const Gap(Space.md),
-              _StatusBanner(task: t, verifyNote: d.verifyNote, future: future),
+              _StatusBanner(task: t, verifyNote: d.verifyNote, future: future, supervisor: role != Role.worker),
               const Gap(Space.md),
               const _Legend(),
               const Gap(Space.md),
@@ -181,7 +182,9 @@ class _CheckRunScreenState extends ConsumerState<CheckRunScreen> {
     String? info;
     if (t.dueDate.isAfter(today())) {
       return null;
-    } else if (!t.isDone || _editing) {
+    } else if (role != Role.worker && !t.isDone) {
+      info = 'Waiting for a worker to complete this check';
+    } else if (role == Role.worker && (!t.isDone || _editing)) {
       info = '$answered of ${d.points.length} points checked';
       action = FilledButton(
         onPressed: _busy || answered < d.points.length ? null : () => _submit(d),
@@ -190,7 +193,7 @@ class _CheckRunScreenState extends ConsumerState<CheckRunScreen> {
     } else if (!t.isVerified && role.isManagerOrAdmin) {
       info = 'Awaiting in-charge verification';
       action = FilledButton.icon(onPressed: _busy ? null : () => _verify(d), icon: const Icon(Icons.verified_rounded, size: 20), label: const Text('Verify'));
-    } else if (!t.isVerified) {
+    } else if (!t.isVerified && role == Role.worker) {
       info = 'Submitted · awaiting verification';
       action = OutlinedButton(onPressed: () => setState(() => _editing = true), child: const Text('Edit results'));
     } else {
@@ -283,7 +286,8 @@ class _HeaderCard extends StatelessWidget {
 }
 
 class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.task, required this.future, this.verifyNote});
+  const _StatusBanner({required this.task, required this.future, this.verifyNote, this.supervisor = false});
+  final bool supervisor;
   final CheckTask task;
   final bool future;
   final String? verifyNote;
@@ -303,6 +307,7 @@ class _StatusBanner extends StatelessWidget {
       _ when future => (Icons.schedule_rounded, p.muted, 'Opens on ${formatDate(t.dueDate)}'),
       _ when t.status == TaskStatus.missed => (Icons.error_outline_rounded, p.danger, 'Missed — the window closed ${formatDate(t.windowEnd)}. You can still record it late.'),
       _ when t.isOverdue(today()) => (Icons.error_outline_rounded, p.warning, 'Overdue — complete by ${formatDate(t.windowEnd)}'),
+      _ when supervisor => (Icons.hourglass_empty_rounded, p.muted, 'Not completed yet — a worker records the results, then you verify'),
       _ => (Icons.play_circle_outline_rounded, p.primary, 'Record a result for every check point, then submit'),
     };
     return Container(

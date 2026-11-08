@@ -29,7 +29,8 @@ class MyChecksScreen extends ConsumerStatefulWidget {
 }
 
 class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
-  late ChecksTab _tab = widget.initialTab;
+  /// Null until the user picks a tab: workers start on Today, supervisors on Verify.
+  ChecksTab? _picked;
 
   /// Optimistic local state while a tick is being saved.
   final Map<String, TaskStatus> _pending = {};
@@ -72,7 +73,9 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(checkTasksProvider(null));
+    // Managers and admins supervise: they see every check read-only and verify; only workers complete checks.
     final canVerify = ref.watch(profileProvider).role.isManagerOrAdmin;
+    final tab = _picked ?? (canVerify && widget.initialTab == ChecksTab.today ? ChecksTab.verify : widget.initialTab);
     final toVerify = canVerify ? (ref.watch(awaitingVerificationProvider).value ?? const <CheckTask>[]) : const <CheckTask>[];
     Future<void> refresh() async {
       ref.invalidate(awaitingVerificationProvider);
@@ -96,7 +99,7 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
             final upcoming = all.where((t) => t.dueDate.isAfter(t0)).toList();
             final doneToday = todays.where((t) => t.isDone).length;
 
-            final list = switch (_tab) {
+            final list = switch (tab) {
               ChecksTab.today => todays,
               ChecksTab.overdue => overdue,
               ChecksTab.upcoming => upcoming,
@@ -107,21 +110,23 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 PageHeader(
-                  title: 'My checks',
-                  subtitle: DateFormat('EEEE, d MMMM').format(t0),
+                  title: canVerify ? 'Checks' : 'My checks',
+                  subtitle: canVerify
+                      ? '${DateFormat('EEEE, d MMMM').format(t0)} · workers complete checks, you verify them'
+                      : DateFormat('EEEE, d MMMM').format(t0),
                 ),
                 _SummaryCard(done: doneToday, total: todays.length, overdue: overdue.length),
                 const Gap(Space.xl),
                 _Tabs(
-                  tab: _tab,
+                  tab: tab,
                   tabs: [ChecksTab.today, ChecksTab.overdue, ChecksTab.upcoming, if (canVerify) ChecksTab.verify],
                   counts: {ChecksTab.today: todays.length - doneToday, ChecksTab.overdue: overdue.length, ChecksTab.upcoming: upcoming.length, ChecksTab.verify: toVerify.length},
-                  onChanged: (t) => setState(() => _tab = t),
+                  onChanged: (t) => setState(() => _picked = t),
                 ),
                 const Gap(Space.lg),
                 if (list.isEmpty)
                   Card(
-                    child: switch (_tab) {
+                    child: switch (tab) {
                       ChecksTab.today => EmptyState(
                           icon: Icons.task_alt_rounded,
                           title: todays.isEmpty ? 'No checks today' : 'All done for today 🎉',
@@ -132,12 +137,12 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
                       ChecksTab.verify => const EmptyState(icon: Icons.verified_outlined, title: 'Nothing to verify', message: 'PM check sheets submitted by workers appear here for your in-charge sign-off.'),
                     },
                   )
-                else if (_tab == ChecksTab.upcoming)
+                else if (tab == ChecksTab.upcoming)
                   ..._byDay(context, upcoming)
-                else if (_tab == ChecksTab.verify)
+                else if (tab == ChecksTab.verify)
                   ..._byEquipment(list, readOnly: true)
                 else
-                  ..._byEquipment(list, readOnly: false),
+                  ..._byEquipment(list, readOnly: canVerify),
               ],
             );
           },

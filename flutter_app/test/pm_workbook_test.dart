@@ -78,6 +78,42 @@ void main() {
       expect(wb.checks.expand((c) => c.warnings), isEmpty);
     });
 
+    test('every tab keeps its own title (row 1 banner)', () {
+      expect(wb.checks.map((c) => c.title).toList(), [
+        'KICKLESS CABLE TEMPERATURE CHECKING & GUN HITTING MONITORING CHECK',
+        'WATER LEAKAGE CHECK FROM GUN & TRANS MANIFOLD JOINTS',
+        'KICKLESS CABLE RUBBING CHECK & CRACK CHECK ROUTING',
+        'GUN HITTING DAMAGE CHECK(WORNOUT CHECK)',
+        'GUN INSPECTION & ELECTRODE SLIPPAGE CHECK',
+        'HAND SWITCH ASSY INSPECTION CHECK',
+        'SHUNT INSPECTION CHECK AND SPATTER CLEANING',
+        'SPRING BALANCER PM INSPECTION CHECK',
+        'GUN SIDE KICKLESS CABLE MOUNTING BOLT TIGHTNESS',
+        'AIR LEAK CHECK',
+        'TRANSFORMER SECONDARY BOLT TIGHTNESS',
+        'TRANSFORMER POWER CABLE & WATER HOSES TILL CABLE TRAY',
+        'KICKLESS CABLE RUBBING CHECK BY REMOVING VINYL SHEET',
+        'HANGER CONDITION CHECK AND GREASING',
+        'OTHER THAN SECONDARY BOLTS THIGHTNESS CHECK',
+        'TEFLON TUBE CONDITION & FRL AIR LEAK CHECK PM',
+        'TIMER PM', // not mistaken for the "TIME MINTS" label
+        'TRANSFORMER PM CHECK SHEET',
+      ]);
+    });
+
+    test('"EQIP PSW GUN:ALP" is read as the equipment label, not a note', () {
+      for (final c in wb.checks.sublist(16)) {
+        expect(c.equipmentLabel, 'PSW GUN:ALP');
+        expect(c.equipmentNo, 'C');
+        expect(c.equipmentRank, 'A');
+        expect(c.timeMinutes, isNotNull);
+        expect(c.safetyNote, startsWith('REMOVE THE CONCENTRIC PLUG BEFORE WORKING ON GUN & Switch off the ELCB'));
+      }
+      for (final c in wb.checks) {
+        expect(c.safetyNote ?? '', isNot(contains('EQIP')), reason: c.tab);
+      }
+    });
+
     test('all check points are found', () {
       expect(wb.checks.map((c) => c.points.length).toList(), [4, 5, 9, 5, 6, 9, 9, 6, 6, 6, 6, 3, 4, 8, 8, 9, 6, 6]);
     });
