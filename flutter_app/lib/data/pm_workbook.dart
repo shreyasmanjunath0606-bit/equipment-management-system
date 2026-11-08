@@ -144,7 +144,22 @@ class PmCheck {
   final List<String> problems = [];
   final List<String> warnings = [];
 
-  bool get ok => problems.isEmpty;
+  /// Frequency issues, kept apart so a Daily/Weekly/Monthly upload can override them ([useSchedule]).
+  String? frequencyProblem, frequencyWarning;
+
+  /// Every problem / warning to show, frequency ones first.
+  List<String> get allProblems => [?frequencyProblem, ...problems];
+  List<String> get allWarnings => [?frequencyWarning, ...warnings];
+
+  bool get ok => frequencyProblem == null && problems.isEmpty;
+
+  /// The workbook was uploaded as the equipment's Daily / Weekly / Monthly sheet: that decides how
+  /// often every tab repeats, whatever its FREQUENCY cell says.
+  void useSchedule(PmSchedule s) {
+    schedule = s;
+    frequencyProblem = null;
+    frequencyWarning = null;
+  }
   int get pictureCount => pictures.length + points.fold(0, (n, p) => n + p.pictures.length);
 
   Map<String, dynamic> toJson({required DateTime fallbackStart, required Map<String, String> picturePaths, required String Function(DateTime) isoDate}) => {
@@ -181,6 +196,13 @@ class PmWorkbook {
   final int skippedPictures;
 
   List<PmCheck> get ready => checks.where((c) => c.ok).toList();
+
+  /// See [PmCheck.useSchedule].
+  void useSchedule(PmSchedule s) {
+    for (final c in checks) {
+      c.useSchedule(s);
+    }
+  }
 
   /// "PSW ALP GUN NO: C" -> label + value, from the first tab that has them.
   String? get equipmentLabel => checks.map((c) => c.equipmentLabel).nonNulls.firstOrNull;
@@ -700,13 +722,13 @@ PmCheck? _parseTab(String tab, _Sheet s, List<_Anchor> anchors, Map<String, PmPi
   if (fromCell != null) {
     check.schedule = fromCell;
     if (fromTab != null && fromTab != fromCell) {
-      check.warnings.add('Tab name suggests ${fromTab.label.toLowerCase()} but the FREQUENCY cell says "${check.frequencyText}" — using the cell');
+      check.frequencyWarning = ('Tab name suggests ${fromTab.label.toLowerCase()} but the FREQUENCY cell says "${check.frequencyText}" — using the cell');
     }
   } else if (fromTab != null && (check.frequencyText ?? '').isEmpty) {
     check.schedule = fromTab;
-    check.warnings.add('FREQUENCY cell is empty — using ${fromTab.label.toLowerCase()} from the tab name');
+    check.frequencyWarning = ('FREQUENCY cell is empty — using ${fromTab.label.toLowerCase()} from the tab name');
   } else {
-    check.problems.add((check.frequencyText ?? '').isEmpty
+    check.frequencyProblem = ((check.frequencyText ?? '').isEmpty
         ? 'No FREQUENCY found on this sheet'
         : 'Frequency "${check.frequencyText}" not recognised (use Daily, Weekly, Monthly, 4 Monthly, Half Yearly, Yearly)');
   }

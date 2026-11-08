@@ -32,16 +32,19 @@ final equipmentListProvider = FutureProvider.family<({List<CurrentStatus> rows, 
 });
 
 class EquipmentDetail {
-  const EquipmentDetail({required this.equipment, this.plantName, this.plantTimezone, this.areaName});
+  const EquipmentDetail({required this.equipment, this.plantName, this.plantTimezone, this.areaName, this.workerName});
   final Equipment equipment;
   final String? plantName, plantTimezone, areaName;
+
+  /// The one worker who looks after this equipment.
+  final String? workerName;
 }
 
 final equipmentDetailProvider = FutureProvider.family<EquipmentDetail?, String>((ref, id) async {
   final row = await ref
       .watch(supabaseProvider)
       .from('equipment')
-      .select('${Equipment.columns},plants(name,timezone),areas(name)')
+      .select('${Equipment.columns},plants(name,timezone),areas(name),worker:profiles!equipment_assigned_worker_fkey(name)')
       .eq('id', id)
       .maybeSingle();
   if (row == null) return null;
@@ -50,6 +53,7 @@ final equipmentDetailProvider = FutureProvider.family<EquipmentDetail?, String>(
     plantName: (row['plants'] as Json?)?['name'] as String?,
     plantTimezone: (row['plants'] as Json?)?['timezone'] as String?,
     areaName: (row['areas'] as Json?)?['name'] as String?,
+    workerName: (row['worker'] as Json?)?['name'] as String?,
   );
 });
 

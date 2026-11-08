@@ -140,6 +140,7 @@ class _EquipmentDetailScreenState extends ConsumerState<EquipmentDetailScreen> {
           ('Type', e.type),
           ('Plant', d.plantName),
           ('Area', d.areaName),
+          ('Worker', d.workerName ?? 'Not assigned'),
           ('Manufacturer', e.manufacturer),
           ('Model', e.model),
           ('Serial no.', e.serialNo),

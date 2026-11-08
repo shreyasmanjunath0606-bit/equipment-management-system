@@ -14,7 +14,7 @@ import '../../data/models.dart';
 import '../../data/providers.dart';
 import '../../data/session.dart';
 
-typedef _UsersData = ({List<Profile> users, Map<String, Set<String>> plantsByUser, List<Json> invites});
+typedef _UsersData = ({List<Profile> users, Map<String, Set<String>> plantsByUser, List<Json> invites, Map<String, String> equipmentByWorker});
 
 final _usersProvider = FutureProvider<_UsersData>((ref) async {
   final db = ref.watch(supabaseProvider);
@@ -22,12 +22,14 @@ final _usersProvider = FutureProvider<_UsersData>((ref) async {
     db.from('profiles').select('id,name,email,role,active').order('name'),
     db.from('user_plants').select('user_id,plant_id'),
     db.from('invites').select('id,email,name,role,expires_at').isFilter('used_at', null).order('created_at', ascending: false),
+    db.from('equipment').select('name,tag_code,assigned_worker').not('assigned_worker', 'is', null),
   ]);
   final byUser = <String, Set<String>>{};
   for (final r in results[1]) {
     byUser.putIfAbsent(r['user_id'] as String, () => {}).add(r['plant_id'] as String);
   }
-  return (users: results[0].map(Profile.fromJson).toList(), plantsByUser: byUser, invites: results[2]);
+  final equipmentByWorker = {for (final r in results[3]) r['assigned_worker'] as String: '${r['name']} (${r['tag_code']})'};
+  return (users: results[0].map(Profile.fromJson).toList(), plantsByUser: byUser, invites: results[2], equipmentByWorker: equipmentByWorker);
 });
 
 /// Calls the admin-users Edge Function (service-role work happens server-side only).
@@ -153,6 +155,12 @@ class AdminUsersScreen extends ConsumerWidget {
                               const SizedBox(height: 2),
                               Text(u.email, style: context.text.bodySmall, overflow: TextOverflow.ellipsis),
                               Text(plantText, style: context.text.bodySmall?.copyWith(color: mine.isEmpty && u.role != Role.admin ? pal.warning : null), overflow: TextOverflow.ellipsis),
+                              if (u.role == Role.worker && u.active)
+                                Text(
+                                  d.equipmentByWorker[u.id] == null ? 'No equipment — assign one under Assignments' : 'Looks after ${d.equipmentByWorker[u.id]}',
+                                  style: context.text.bodySmall?.copyWith(color: d.equipmentByWorker[u.id] == null ? pal.warning : null),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                             ]),
                           ),
                           if (u.id != me.id)

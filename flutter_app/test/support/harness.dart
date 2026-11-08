@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:equipment_portal/core/router.dart';
 import 'package:equipment_portal/core/theme/app_theme.dart';
+import 'package:equipment_portal/data/assignments.dart';
 import 'package:equipment_portal/data/checks.dart';
 import 'package:equipment_portal/data/equipment_repo.dart';
 import 'package:equipment_portal/features/history/history_screen.dart';
@@ -55,6 +56,7 @@ Widget testApp({required Profile profile, required String location, Brightness b
         ]),
       ),
       checkTasksProvider.overrideWith((ref, equipmentId) async => fake.checkTasks),
+      myEquipmentProvider.overrideWith((ref) async => fake.equipmentDetail.equipment),
       checkStatsProvider.overrideWith((ref, k) async => fake.checkStats(k.days)),
       findingStatsProvider.overrideWith((ref, k) async => fake.findingStats(k.days)),
       findingsProvider.overrideWith((ref, eq) async => fake.findings.where((f) => eq == null || f.equipmentId == eq).toList()),

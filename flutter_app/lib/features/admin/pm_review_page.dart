@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/widgets/layout.dart';
 import '../../core/widgets/status.dart';
+import '../../data/assignments.dart';
 import '../../data/checks.dart';
 import '../../data/models.dart';
 import '../../data/pm_workbook.dart';
@@ -16,15 +17,31 @@ import '../../data/session.dart';
 
 const _xlsxMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-/// Review of an uploaded PM workbook before importing. Frequencies come from each sheet's FREQUENCY
-/// cell and are not editable; the manager only confirms which equipment the workbook belongs to.
+/// Review of an uploaded PM workbook before importing it onto one equipment. For a Daily / Weekly /
+/// Monthly slot every tab repeats at that frequency; for an extra workbook each tab's FREQUENCY cell
+/// decides. The manager only confirms the name (and the day of the month for Monthly).
 class PmReviewPage extends ConsumerStatefulWidget {
-  const PmReviewPage({super.key, required this.plant, required this.fileName, required this.bytes, required this.workbook, required this.equipment});
+  const PmReviewPage({
+    super.key,
+    required this.plant,
+    required this.fileName,
+    required this.bytes,
+    required this.workbook,
+    required this.equipment,
+    required this.slot,
+    this.replacing,
+    this.workerName,
+  });
   final Plant plant;
   final String fileName;
   final Uint8List bytes;
   final PmWorkbook workbook;
-  final List<EquipmentCandidate> equipment;
+  final EquipmentCandidate equipment;
+  final SheetSlot slot;
+
+  /// Title of the workbook this upload replaces in [slot], if any.
+  final String? replacing;
+  final String? workerName;
 
   @override
   ConsumerState<PmReviewPage> createState() => _PmReviewPageState();
@@ -32,29 +49,30 @@ class PmReviewPage extends ConsumerStatefulWidget {
 
 class _PmReviewPageState extends ConsumerState<PmReviewPage> {
   late final _title = TextEditingController(text: widget.fileName.replaceAll(RegExp(r'\.xlsx$', caseSensitive: false), ''));
-  /// Worked out once, before the manager touches the picker.
-  late final String? _suggestion = suggestEquipment(
-    fileName: widget.fileName,
-    equipmentLabel: widget.workbook.equipmentLabel,
-    equipmentNo: widget.workbook.equipmentNo,
-    equipment: widget.equipment,
-  );
-  late String? _equipment = _suggestion;
-  bool get _suggested => _suggestion != null && _equipment == _suggestion;
+  int _monthlyDay = today().day;
 
   /// "PSW ALP GUN NO C", as written on the sheets.
   String? get _sheetEquipment {
     final s = [wb.equipmentLabel, wb.equipmentNo].nonNulls.join(' ').trim();
     return s.isEmpty ? null : s;
   }
+
+  /// The sheet header names a unit number that doesn't match the equipment being uploaded to.
+  bool get _looksLikeOtherEquipment {
+    if (wb.equipmentNo == null) return false;
+    final match = suggestEquipment(fileName: widget.fileName, equipmentLabel: wb.equipmentLabel, equipmentNo: wb.equipmentNo, equipment: [widget.equipment]);
+    return match == null;
+  }
+
   bool _busy = false;
   String? _progress, _error;
 
   PmWorkbook get wb => widget.workbook;
+  bool get _main => widget.slot != SheetSlot.extra;
 
   Future<void> _import() async {
     final ready = wb.ready;
-    if (ready.isEmpty || _equipment == null || _title.text.trim().isEmpty) return;
+    if (ready.isEmpty || _title.text.trim().isEmpty) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -87,18 +105,21 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
       if (mounted) setState(() => _progress = 'Creating checks…');
       final res = await db.rpc('import_pm_workbook', params: {
         'p_plant': widget.plant.id,
-        'p_equipment': _equipment,
+        'p_equipment': widget.equipment.id,
         'p_title': _title.text.trim(),
         'p_file_name': widget.fileName,
         'p_file_path': stored,
         'p_checks': [for (final c in ready) c.toJson(fallbackStart: today(), picturePaths: paths, isoDate: isoDate)],
+        'p_slot': widget.slot.name,
+        'p_monthly_day': widget.slot == SheetSlot.monthly ? _monthlyDay : null,
       }) as Map;
       HapticFeedback.mediumImpact();
       final missingPics = used.length - paths.length;
       if (mounted) {
         Navigator.pop(
           context,
-          '${res['items']} PM checks · ${res['points']} check points imported · ${res['tasks_created']} scheduled'
+          '${_main ? '${widget.slot.label} workbook ${res['replaced'] == true ? 'replaced' : 'added'}: ' : ''}'
+          '${res['items']} checks · ${res['points']} check points · ${res['tasks_created']} scheduled'
           '${missingPics > 0 ? ' · $missingPics pictures could not be uploaded' : ''}',
         );
       }
@@ -117,8 +138,9 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
     final ready = wb.ready.length;
     final bad = wb.checks.length - ready;
     final points = wb.ready.fold(0, (n, c) => n + c.points.length);
+    final schedule = widget.slot.schedule(monthlyDay: _monthlyDay);
 
-    // Group by schedule: Daily, Weekly, Monthly, Every 4 months, Half-yearly, ...
+    // Extra workbooks group by each tab's schedule: Every 4 months, Half-yearly, ...
     int rank(PmSchedule? s) => s == null ? 1 << 20 : s.unit.index * 1000 + s.interval;
     final groups = <PmSchedule?, List<PmCheck>>{};
     for (final c in wb.checks) {
@@ -163,23 +185,33 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
                 ),
               ],
               const Gap(Space.lg),
-              LayoutBuilder(
-                builder: (context, c) => DropdownMenu<String>(
-                  width: c.maxWidth,
-                  initialSelection: _equipment,
-                  enableFilter: true,
-                  requestFocusOnTap: true,
-                  label: const Text('Equipment this workbook is for'),
-                  helperText: _suggested
-                      ? 'Matched “${_sheetEquipment ?? widget.fileName}” from the sheet header — change it if wrong'
-                      : (_suggestion == null && _sheetEquipment != null
-                          ? 'No equipment here matches “$_sheetEquipment” — pick it, or add it under Equipment first'
-                          : 'Every sheet in the workbook is scheduled for this equipment'),
-                  errorText: widget.equipment.isEmpty ? 'No active equipment in this plant yet' : null,
-                  dropdownMenuEntries: [for (final e in widget.equipment) DropdownMenuEntry(value: e.id, label: '${e.name} · ${e.code}')],
-                  onSelected: (v) => setState(() => _equipment = v),
+              _Fact(icon: Icons.precision_manufacturing_outlined, label: 'Equipment', value: '${widget.equipment.name} · ${widget.equipment.code}'),
+              _Fact(icon: Icons.person_outline_rounded, label: 'Worker', value: widget.workerName ?? 'nobody yet — assign one so the checks show up'),
+              _Fact(icon: Icons.event_repeat_rounded, label: 'Repeats', value: _main ? '$schedule — every tab in this workbook' : 'each tab’s own FREQUENCY'),
+              if (_looksLikeOtherEquipment)
+                Padding(
+                  padding: const EdgeInsets.only(top: Space.xs),
+                  child: Text('The sheets say “$_sheetEquipment”. Make sure this workbook is for ${widget.equipment.name}.', style: context.text.bodySmall?.copyWith(color: p.warning)),
                 ),
-              ),
+              if (widget.replacing != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: Space.xs),
+                  child: Text('This replaces the current ${widget.slot.label.toLowerCase()} workbook “${widget.replacing}”. Its open checks are removed; finished ones stay in the history.',
+                      style: context.text.bodySmall?.copyWith(color: p.warning)),
+                ),
+              if (widget.slot == SheetSlot.monthly) ...[
+                const Gap(Space.md),
+                LayoutBuilder(
+                  builder: (context, c) => DropdownMenu<int>(
+                    width: c.maxWidth,
+                    initialSelection: _monthlyDay,
+                    label: const Text('Day of the month'),
+                    helperText: 'In shorter months, days 29–31 fall on the last day of the month',
+                    dropdownMenuEntries: [for (var d = 1; d <= 31; d++) DropdownMenuEntry(value: d, label: ordinal(d))],
+                    onSelected: (v) => setState(() => _monthlyDay = v ?? _monthlyDay),
+                  ),
+                ),
+              ],
               const Gap(Space.md),
               TextField(controller: _title, decoration: const InputDecoration(labelText: 'Workbook name', hintText: 'e.g. ALP C GUN')),
             ]),
@@ -190,7 +222,9 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
           Padding(
             padding: const EdgeInsets.only(left: Space.xs, bottom: Space.sm),
             child: Text(
-              k == null ? 'Frequency not recognised' : '${k.label} · ${groups[k]!.length} sheet${groups[k]!.length == 1 ? '' : 's'}',
+              k == null
+                  ? 'Frequency not recognised'
+                  : '${_main ? schedule : k.label} · ${groups[k]!.length} check${groups[k]!.length == 1 ? '' : 's'}',
               style: context.text.labelLarge?.copyWith(color: k == null ? p.danger : null),
             ),
           ),
@@ -199,7 +233,7 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
             child: Column(children: [
               for (var i = 0; i < groups[k]!.length; i++) ...[
                 if (i > 0) Divider(height: 1, color: p.border),
-                _CheckTile(check: groups[k]![i]),
+                _CheckTile(check: groups[k]![i], main: _main),
               ],
             ]),
           ),
@@ -222,10 +256,10 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
                 SizedBox(
                   height: 52,
                   child: FilledButton(
-                    onPressed: _busy || ready == 0 || _equipment == null ? null : _import,
+                    onPressed: _busy || ready == 0 ? null : _import,
                     child: _busy
                         ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
-                        : Text(_equipment == null ? 'Choose the equipment first' : 'Import $ready PM check${ready == 1 ? '' : 's'}'),
+                        : Text(_main ? 'Use as ${widget.slot.label.toLowerCase()} workbook · $ready check${ready == 1 ? '' : 's'}' : 'Import $ready PM check${ready == 1 ? '' : 's'}'),
                   ),
                 ),
               ]),
@@ -238,8 +272,11 @@ class _PmReviewPageState extends ConsumerState<PmReviewPage> {
 }
 
 class _CheckTile extends StatelessWidget {
-  const _CheckTile({required this.check});
+  const _CheckTile({required this.check, required this.main});
   final PmCheck check;
+
+  /// Part of a Daily / Weekly / Monthly workbook: the tab's own frequency and start date don't apply.
+  final bool main;
 
   @override
   Widget build(BuildContext context) {
@@ -252,7 +289,7 @@ class _CheckTile extends StatelessWidget {
       if (c.pictureCount > 0) '${c.pictureCount} pictures',
       if (c.manPower != null) 'man power ${c.manPower!.replaceAll('\n', ', ')}',
       if (c.timeMinutes != null) '${c.timeMinutes!.replaceAll('\n', ', ')} min',
-      if (c.startDate != null) 'from ${formatDate(c.startDate!)}',
+      if (c.startDate != null && !main) 'from ${formatDate(c.startDate!)}',
     ];
     return ExpansionTile(
       tilePadding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.xs),
@@ -262,8 +299,8 @@ class _CheckTile extends StatelessWidget {
       subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const SizedBox(height: 2),
         Text('${c.tab} · ${facts.join(' · ')}', style: context.text.bodySmall),
-        for (final pr in c.problems) _note(context, Icons.error_outline_rounded, pr, p.danger),
-        for (final w in c.warnings) _note(context, Icons.info_outline_rounded, w, p.warning),
+        for (final pr in c.allProblems) _note(context, Icons.error_outline_rounded, pr, p.danger),
+        for (final w in c.allWarnings) _note(context, Icons.info_outline_rounded, w, p.warning),
       ]),
       trailing: c.ok ? Pill('Ready', color: p.success) : Pill('Skip', color: p.danger),
       children: [
@@ -295,6 +332,23 @@ class _CheckTile extends StatelessWidget {
           Icon(icon, size: 14, color: color),
           const SizedBox(width: 4),
           Flexible(child: Text(text, style: context.text.bodySmall?.copyWith(color: color))),
+        ]),
+      );
+}
+
+class _Fact extends StatelessWidget {
+  const _Fact({required this.icon, required this.label, required this.value});
+  final IconData icon;
+  final String label, value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: Space.xs),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 18, color: context.palette.muted),
+          const Gap(Space.sm),
+          SizedBox(width: 76, child: Text(label, style: context.text.bodySmall)),
+          Expanded(child: Text(value, style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w500))),
         ]),
       );
 }

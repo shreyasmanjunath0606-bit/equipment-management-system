@@ -33,7 +33,7 @@ When hosting `build/web`, rewrite every path to `index.html`, so that links like
 
 ## Backend pieces this app needs
 
-- **Database migrations** in `../supabase/migrations/`. The checks, findings and reminders schema is `20261108000001_checks_findings.sql`.
+- **Database migrations** in `../supabase/migrations/`. The checks, findings and reminders schema is `20261108000001_checks_findings.sql`. One worker per equipment, and the Daily / Weekly / Monthly workbook slots, are in `20261110000001_worker_equipment_assignment.sql`: managers set them up under **Assignments**, and a worker only sees the checks of the equipment assigned to them.
 - **Edge Function `admin-users`** in `../supabase/functions/admin-users/`. It handles inviting and deactivating users. Deploy it with:
   `supabase functions deploy admin-users`
 - **Supabase → Authentication → URL Configuration.** Add the web app's URL and `com.equipmentportal.app://auth-callback` to the redirect URLs.

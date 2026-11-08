@@ -10,6 +10,7 @@ import '../../core/theme/tokens.dart';
 import '../../core/widgets/feedback.dart';
 import '../../core/widgets/layout.dart';
 import '../../core/widgets/status.dart';
+import '../../data/assignments.dart';
 import '../../data/checks.dart';
 import '../../data/offline_queue.dart';
 import '../../data/session.dart';
@@ -77,8 +78,13 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
     final canVerify = ref.watch(profileProvider).role.isManagerOrAdmin;
     final tab = _picked ?? (canVerify && widget.initialTab == ChecksTab.today ? ChecksTab.verify : widget.initialTab);
     final toVerify = canVerify ? (ref.watch(awaitingVerificationProvider).value ?? const <CheckTask>[]) : const <CheckTask>[];
+    // A worker looks after exactly one equipment; their list only ever holds its checks.
+    final mine = canVerify ? null : ref.watch(myEquipmentProvider);
+    final myEquipment = mine?.value;
+    final unassigned = mine != null && mine.hasValue && myEquipment == null;
     Future<void> refresh() async {
       ref.invalidate(awaitingVerificationProvider);
+      if (!canVerify) ref.invalidate(myEquipmentProvider);
       ref.invalidate(checkTasksProvider(null));
       await ref.read(checkTasksProvider(null).future);
     }
@@ -113,8 +119,18 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
                   title: canVerify ? 'Checks' : 'My checks',
                   subtitle: canVerify
                       ? '${DateFormat('EEEE, d MMMM').format(t0)} · workers complete checks, you verify them'
-                      : DateFormat('EEEE, d MMMM').format(t0),
+                      : [DateFormat('EEEE, d MMMM').format(t0), if (myEquipment != null) 'your equipment: ${myEquipment.name} (${myEquipment.tagCode})'].join(' · '),
                 ),
+                if (unassigned) ...[
+                  const Card(
+                    child: EmptyState(
+                      icon: Icons.assignment_ind_outlined,
+                      title: 'No equipment assigned to you yet',
+                      message: 'Your manager assigns you one equipment and its daily, weekly and monthly check sheets. Its checks will show up here.',
+                    ),
+                  ),
+                  const Gap(Space.xl),
+                ],
                 _SummaryCard(done: doneToday, total: todays.length, overdue: overdue.length),
                 const Gap(Space.xl),
                 _Tabs(
@@ -311,6 +327,11 @@ class _EquipmentGroup extends StatelessWidget {
                     Text(first.equipmentCode, style: context.text.bodySmall?.copyWith(fontSize: 11, letterSpacing: 0.4, fontFeatures: const [FontFeature.tabularFigures()])),
                   ]),
                 ),
+                // Managers: pending checks nobody can do, because the equipment has no worker.
+                if (onToggle == null && tasks.any((t) => !t.isDone && t.assignedTo == null)) ...[
+                  Pill('No worker', color: p.warning, icon: Icons.person_off_outlined),
+                  const Gap(Space.sm),
+                ],
                 if (onToggle != null) ...[
                   Text('$done/${tasks.length}', style: context.text.labelMedium),
                   const Gap(Space.sm),
