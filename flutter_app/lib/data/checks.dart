@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +23,22 @@ enum CheckFrequency {
   }
 
   String get label => '${name[0].toUpperCase()}${name.substring(1)}';
+}
+
+/// "Daily", "Weekly", "Every 2 weeks", "Monthly", "Every 4 months", "Half-yearly", "Yearly".
+String frequencyLabel(CheckFrequency unit, int interval) {
+  if (interval <= 1) return unit.label;
+  return switch (unit) {
+    CheckFrequency.daily => 'Every $interval days',
+    CheckFrequency.weekly => 'Every $interval weeks',
+    CheckFrequency.monthly => switch (interval) {
+        3 => 'Quarterly',
+        6 => 'Half-yearly',
+        12 => 'Yearly',
+        _ when interval % 12 == 0 => 'Every ${interval ~/ 12} years',
+        _ => 'Every $interval months',
+      },
+  };
 }
 
 enum TaskStatus {
@@ -60,23 +77,36 @@ class CheckTask {
     this.completedAt,
     this.completedByName,
     this.note,
+    this.interval = 1,
+    this.pmType,
+    this.pointCount = 0,
+    this.verifiedAt,
+    this.verifiedByName,
   });
 
   final String id, itemId, equipmentId, plantId, title, equipmentName, equipmentCode;
-  final String? description, completedByName, note;
+  final String? description, completedByName, note, pmType, verifiedByName;
   final DateTime dueDate, windowEnd;
-  final DateTime? completedAt;
+  final DateTime? completedAt, verifiedAt;
   final TaskStatus status;
   final CheckFrequency frequency;
+  final int interval;
+
+  /// Check points from a PM sheet. Tasks with points are completed point by point, not with one tick.
+  final int pointCount;
 
   bool get isDone => status == TaskStatus.done;
+  bool get isPm => pointCount > 0;
+  bool get isVerified => verifiedAt != null;
+  String get frequencyText => frequencyLabel(frequency, interval);
 
   /// Pending, past its due day but still inside its completion window.
   bool isOverdue(DateTime today) => status == TaskStatus.pending && dueDate.isBefore(today) && !windowEnd.isBefore(today);
 
   static const select =
-      'id,check_item_id,equipment_id,plant_id,due_date,window_end,status,completed_at,note,'
-      'check_items(title,description,frequency),equipment(name,tag_code),completer:profiles!check_tasks_completed_by_fkey(name)';
+      'id,check_item_id,equipment_id,plant_id,due_date,window_end,status,completed_at,note,verified_at,'
+      'check_items(title,description,frequency,interval_count,pm_type,check_points(count)),equipment(name,tag_code),'
+      'completer:profiles!check_tasks_completed_by_fkey(name),verifier:profiles!check_tasks_verified_by_fkey(name)';
 
   factory CheckTask.fromJson(Json j) {
     final item = j['check_items'] as Json? ?? const {};
@@ -97,6 +127,11 @@ class CheckTask {
       equipmentName: eq['name'] as String? ?? '',
       equipmentCode: eq['tag_code'] as String? ?? '',
       completedByName: (j['completer'] as Json?)?['name'] as String?,
+      interval: (item['interval_count'] as num?)?.toInt() ?? 1,
+      pmType: item['pm_type'] as String?,
+      pointCount: ((item['check_points'] as List?)?.firstOrNull as Json?)?['count'] as int? ?? 0,
+      verifiedAt: j['verified_at'] == null ? null : DateTime.parse(j['verified_at'] as String).toLocal(),
+      verifiedByName: (j['verifier'] as Json?)?['name'] as String?,
     );
   }
 
@@ -116,6 +151,11 @@ class CheckTask {
         completedAt: clearCompletion ? null : (completedAt ?? this.completedAt),
         completedByName: clearCompletion ? null : (completedByName ?? this.completedByName),
         note: note,
+        interval: interval,
+        pmType: pmType,
+        pointCount: pointCount,
+        verifiedAt: verifiedAt,
+        verifiedByName: verifiedByName,
       );
 }
 
@@ -181,6 +221,166 @@ class Finding {
   }
 }
 
+/// ○ OK · ⊗ immediate correction · △ abnormal, correction pending (▲ once its finding is resolved).
+enum PointResult {
+  ok('○', 'OK'),
+  corrected('⊗', 'Corrected now'),
+  abnormalPending('△', 'Abnormal – pending');
+
+  const PointResult(this.symbol, this.label);
+  final String symbol, label;
+
+  String get dbName => this == abnormalPending ? 'abnormal_pending' : name;
+  static PointResult? parse(String? v) => PointResult.values.where((r) => r.dbName == v).firstOrNull;
+}
+
+/// One row of a PM sheet, with every column the paper sheet has.
+class CheckPoint {
+  const CheckPoint({
+    required this.id,
+    required this.position,
+    required this.checkPoint,
+    this.slNo,
+    this.safetyPoint,
+    this.keyPoints,
+    this.ifNotDone,
+    this.checkingMethod,
+    this.stdValue,
+    this.actionIfNg,
+    this.pmRank,
+    this.imagePaths = const [],
+  });
+
+  final String id, checkPoint;
+  final int position;
+  final String? slNo, safetyPoint, keyPoints, ifNotDone, checkingMethod, stdValue, actionIfNg, pmRank;
+  final List<String> imagePaths;
+
+  static const select = 'id,position,sl_no,check_point,safety_point,key_points,if_not_done,checking_method,std_value,action_if_ng,pm_rank,image_paths';
+
+  factory CheckPoint.fromJson(Json j) => CheckPoint(
+        id: j['id'] as String,
+        position: (j['position'] as num).toInt(),
+        checkPoint: j['check_point'] as String,
+        slNo: j['sl_no'] as String?,
+        safetyPoint: j['safety_point'] as String?,
+        keyPoints: j['key_points'] as String?,
+        ifNotDone: j['if_not_done'] as String?,
+        checkingMethod: j['checking_method'] as String?,
+        stdValue: j['std_value'] as String?,
+        actionIfNg: j['action_if_ng'] as String?,
+        pmRank: j['pm_rank'] as String?,
+        imagePaths: ((j['image_paths'] as List?) ?? const []).cast<String>(),
+      );
+}
+
+class RecordedResult {
+  const RecordedResult({required this.pointId, required this.result, this.note, this.findingId, this.findingResolved = false});
+  final String pointId;
+  final PointResult result;
+  final String? note, findingId;
+  final bool findingResolved;
+
+  /// ▲ pending completed: an abnormal point whose correction has since been done.
+  bool get pendingCompleted => result == PointResult.abnormalPending && findingResolved;
+  String get symbol => pendingCompleted ? '▲' : result.symbol;
+  String get label => pendingCompleted ? 'Pending – completed' : result.label;
+}
+
+/// Everything the run screen shows for one PM task: the sheet's header block, its points and any results.
+class PmTaskDetail {
+  const PmTaskDetail({
+    required this.task,
+    required this.points,
+    required this.results,
+    this.frequencyText,
+    this.sourceTab,
+    this.pmRank,
+    this.manPower,
+    this.timeMinutes,
+    this.kanbanNo,
+    this.safetyNote,
+    this.tools,
+    this.imagePaths = const [],
+    this.verifyNote,
+    this.imageUrls = const {},
+  });
+
+  final CheckTask task;
+  final List<CheckPoint> points;
+  final Map<String, RecordedResult> results; // by point id
+  final String? frequencyText, sourceTab, pmRank, manPower, timeMinutes, kanbanNo, safetyNote, tools, verifyNote;
+  final List<String> imagePaths;
+
+  /// Signed URLs for every picture path (sheet pictures are in the private `check-sheets` bucket).
+  final Map<String, String> imageUrls;
+}
+
+final pmTaskDetailProvider = FutureProvider.family<PmTaskDetail, String>((ref, taskId) async {
+  final db = ref.watch(supabaseProvider);
+  final j = await db
+      .from('check_tasks')
+      .select('${CheckTask.select},verify_note,'
+          'item:check_items!inner(frequency_text,source_tab,pm_rank,man_power,time_minutes,kanban_no,safety_note,tools,image_paths,'
+          'check_points(${CheckPoint.select})),'
+          'check_point_results(check_point_id,result,note,finding_id,findings(status))')
+      .eq('id', taskId)
+      .single();
+  final item = j['item'] as Json;
+  final points = ((item['check_points'] as List?) ?? const []).cast<Json>().map(CheckPoint.fromJson).toList()..sort((a, b) => a.position.compareTo(b.position));
+  final results = <String, RecordedResult>{
+    for (final r in ((j['check_point_results'] as List?) ?? const []).cast<Json>())
+      if (PointResult.parse(r['result'] as String?) != null)
+        r['check_point_id'] as String: RecordedResult(
+          pointId: r['check_point_id'] as String,
+          result: PointResult.parse(r['result'] as String?)!,
+          note: r['note'] as String?,
+          findingId: r['finding_id'] as String?,
+          findingResolved: (r['findings'] as Json?)?['status'] == 'resolved',
+        ),
+  };
+  final itemImages = ((item['image_paths'] as List?) ?? const []).cast<String>();
+  final paths = {...itemImages, for (final p in points) ...p.imagePaths}.toList();
+  final urls = <String, String>{};
+  if (paths.isNotEmpty) {
+    try {
+      // ignore: deprecated_member_use
+      for (final s in await db.storage.from('check-sheets').createSignedUrls(paths, 3600)) {
+        urls[s.path] = s.signedUrl;
+      }
+    } catch (_) {} // pictures are a help, not a blocker (e.g. offline)
+  }
+  return PmTaskDetail(
+    task: CheckTask.fromJson(j),
+    points: points,
+    results: results,
+    frequencyText: item['frequency_text'] as String?,
+    sourceTab: item['source_tab'] as String?,
+    pmRank: item['pm_rank'] as String?,
+    manPower: item['man_power'] as String?,
+    timeMinutes: item['time_minutes'] as String?,
+    kanbanNo: item['kanban_no'] as String?,
+    safetyNote: item['safety_note'] as String?,
+    tools: item['tools'] as String?,
+    imagePaths: itemImages,
+    verifyNote: j['verify_note'] as String?,
+    imageUrls: urls,
+  );
+});
+
+/// Completed PM checks the in-charge has not verified yet (managers / admins).
+final awaitingVerificationProvider = FutureProvider<List<CheckTask>>((ref) async {
+  final rows = await ref
+      .watch(supabaseProvider)
+      .from('check_tasks')
+      .select(CheckTask.select)
+      .eq('status', 'done')
+      .isFilter('verified_at', null)
+      .order('completed_at', ascending: false)
+      .limit(500);
+  return rows.map(CheckTask.fromJson).where((t) => t.isPm).toList();
+});
+
 class DailyCheckStat {
   const DailyCheckStat({required this.day, required this.planned, required this.completed, required this.cumPlanned, required this.cumCompleted});
   final DateTime day;
@@ -211,14 +411,15 @@ class DailyFindingStat {
 
 typedef StatsKey = ({String? plantId, int days});
 
-/// Checks for "My checks": the last 5 weeks (for overdue weekly/monthly windows) up to a week ahead.
+/// Checks for "My checks": the last 5 weeks plus anything whose window is still open (4-monthly and
+/// half-yearly checks stay open for months), up to a week ahead.
 final checkTasksProvider = FutureProvider.family<List<CheckTask>, String?>((ref, equipmentId) async {
   final client = ref.watch(supabaseProvider);
   final t = today();
   var q = client
       .from('check_tasks')
       .select(CheckTask.select)
-      .gte('due_date', isoDate(t.subtract(const Duration(days: 35))))
+      .or('due_date.gte.${isoDate(t.subtract(const Duration(days: 35)))},window_end.gte.${isoDate(t)}')
       .lte('due_date', isoDate(t.add(const Duration(days: 7))));
   if (equipmentId != null) q = q.eq('equipment_id', equipmentId);
   final rows = await q.order('due_date').limit(3000);
@@ -265,6 +466,35 @@ class ChecksRepository {
           kind: QueuedKind.taskTick,
           payload: {'task_id': taskId, 'status': done ? 'done' : 'pending'},
         ));
+  }
+
+  /// Submit a PM check: one result per point (+ optional note, photo for △). Works offline.
+  Future<SendResult> submitPmTask({
+    required String taskId,
+    required String equipmentId,
+    required Map<String, ({PointResult result, String note, Uint8List? photo})> results,
+  }) {
+    return ref.read(offlineQueueProvider).submit(QueuedAction(
+          id: const Uuid().v4(),
+          userId: ref.read(profileProvider).id,
+          kind: QueuedKind.taskSubmit,
+          payload: {
+            'task_id': taskId,
+            'equipment_id': equipmentId,
+            'results': [
+              for (final e in results.entries) {'point_id': e.key, 'result': e.value.result.dbName, 'note': e.value.note.trim()},
+            ],
+            'photos': {
+              for (final e in results.entries)
+                if (e.value.photo != null && e.value.result == PointResult.abnormalPending) e.key: base64Encode(e.value.photo!),
+            },
+          },
+        ));
+  }
+
+  /// In-charge sign-off of a completed PM check.
+  Future<void> verifyTask(String taskId, {String? note}) async {
+    await ref.read(supabaseProvider).rpc('verify_check_task', params: {'p_task': taskId, 'p_note': note});
   }
 
   Future<SendResult> reportFinding({

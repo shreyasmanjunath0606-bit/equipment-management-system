@@ -9,7 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'session.dart';
 
 /// Kinds of work that can be saved while offline and sent later.
-enum QueuedKind { statusReport, taskTick, finding }
+enum QueuedKind { statusReport, taskTick, finding, taskSubmit }
 
 /// One queued action. Each carries a client id so retries never create duplicates on the server.
 class QueuedAction {
@@ -144,6 +144,22 @@ class OfflineQueue extends ChangeNotifier {
           await _client.from('status_events').insert({...a.payload, 'client_event_id': a.id, 'photo_path': ?photoPath});
         case QueuedKind.taskTick:
           await _client.from('check_tasks').update({'status': a.payload['status']}).eq('id', a.payload['task_id'] as String);
+        case QueuedKind.taskSubmit:
+          // Photos of △ points go up first; the RPC attaches them to the findings it creates.
+          final results = [for (final r in a.payload['results'] as List) Map<String, dynamic>.from(r as Map)];
+          final photos = Map<String, dynamic>.from(a.payload['photos'] as Map? ?? const {});
+          for (final r in results) {
+            final b64 = photos[r['point_id']] as String?;
+            if (b64 == null) continue;
+            final path = '${a.payload['equipment_id']}/finding-${a.id}-${r['point_id']}.jpg';
+            try {
+              await _client.storage.from('failure-photos').uploadBinary(path, base64Decode(b64), fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true));
+              r['photo_path'] = path;
+            } catch (e) {
+              if (isNetworkError(e)) return SendResult.offline;
+            }
+          }
+          await _client.rpc('submit_check_task', params: {'p_task': a.payload['task_id'], 'p_results': results});
         case QueuedKind.finding:
           String? photoPath;
           if (a.photo != null) {

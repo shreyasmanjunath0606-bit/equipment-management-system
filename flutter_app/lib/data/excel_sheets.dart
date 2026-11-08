@@ -163,13 +163,17 @@ List<int> buildTemplate({String exampleCode = '101-CNC-0001'}) {
   return x.encode()!;
 }
 
-/// Completed / missed / pending checks exported back to Excel.
-List<int> buildCompletionsReport(List<CheckTask> tasks) {
+/// One recorded check-point result, for the export.
+typedef PointResultRow = ({String taskId, int position, String? slNo, String checkPoint, RecordedResult result});
+
+/// Completed / missed / pending checks exported back to Excel, plus a "Point results" sheet for PM
+/// checks (one row per check point with its ○ / ⊗ / △ / ▲ result).
+List<int> buildCompletionsReport(List<CheckTask> tasks, {List<PointResultRow> points = const []}) {
   final x = Excel.createExcel();
   final s = x['Completions'];
   x.setDefaultSheet('Completions');
   if (x.tables.containsKey('Sheet1')) x.delete('Sheet1');
-  const headers = ['Due date', 'Equipment code', 'Equipment', 'Check item', 'Frequency', 'Status', 'Completed by', 'Completed at'];
+  const headers = ['Due date', 'Equipment code', 'Equipment', 'Check item', 'Frequency', 'Status', 'Completed by', 'Completed at', 'Verified by (in-charge)', 'Verified at'];
   s.appendRow([for (final h in headers) TextCellValue(h)]);
   final bold = CellStyle(bold: true, backgroundColorHex: ExcelColor.fromHexString('#E2E8F0'));
   for (var i = 0; i < headers.length; i++) {
@@ -182,11 +186,45 @@ List<int> buildCompletionsReport(List<CheckTask> tasks) {
       TextCellValue(t.equipmentCode),
       TextCellValue(t.equipmentName),
       TextCellValue(t.title),
-      TextCellValue(t.frequency.label),
+      TextCellValue(t.frequencyText),
       TextCellValue(switch (t.status) { TaskStatus.done => 'Done', TaskStatus.missed => 'Missed', TaskStatus.pending => 'Pending' }),
       TextCellValue(t.completedByName ?? ''),
       TextCellValue(t.completedAt == null ? '' : formatDateTime(t.completedAt!)),
+      TextCellValue(t.verifiedByName ?? ''),
+      TextCellValue(t.verifiedAt == null ? '' : formatDateTime(t.verifiedAt!)),
     ]);
+  }
+  if (points.isNotEmpty) {
+    final byId = {for (final t in tasks) t.id: t};
+    final ps = x['Point results'];
+    const ph = ['Due date', 'Equipment', 'Check', 'SL no', 'Check point', 'Result', 'Meaning', 'Note', 'Done by'];
+    ps.appendRow([for (final h in ph) TextCellValue(h)]);
+    for (var i = 0; i < ph.length; i++) {
+      ps.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).cellStyle = bold;
+      ps.setColumnWidth(i, i == 4 ? 48 : (i == 2 || i == 7 ? 32 : 14));
+    }
+    final sorted = [...points]..sort((a, b) {
+        final ta = byId[a.taskId], tb = byId[b.taskId];
+        final c = (tb?.dueDate ?? DateTime(0)).compareTo(ta?.dueDate ?? DateTime(0));
+        if (c != 0) return c;
+        final c2 = (ta?.title ?? '').compareTo(tb?.title ?? '');
+        return c2 != 0 ? c2 : a.position.compareTo(b.position);
+      });
+    for (final r in sorted) {
+      final t = byId[r.taskId];
+      if (t == null) continue;
+      ps.appendRow([
+        DateCellValue(year: t.dueDate.year, month: t.dueDate.month, day: t.dueDate.day),
+        TextCellValue('${t.equipmentName} (${t.equipmentCode})'),
+        TextCellValue(t.title),
+        TextCellValue(r.slNo ?? '${r.position}'),
+        TextCellValue(r.checkPoint),
+        TextCellValue(r.result.symbol),
+        TextCellValue(r.result.label),
+        TextCellValue(r.result.note ?? ''),
+        TextCellValue(t.completedByName ?? ''),
+      ]);
+    }
   }
   return x.encode()!;
 }

@@ -12,10 +12,11 @@ import '../../core/widgets/layout.dart';
 import '../../core/widgets/status.dart';
 import '../../data/checks.dart';
 import '../../data/offline_queue.dart';
+import '../../data/session.dart';
 import '../findings/report_finding_sheet.dart';
 import 'progress_ring.dart';
 
-enum ChecksTab { today, overdue, upcoming }
+enum ChecksTab { today, overdue, upcoming, verify }
 
 /// Worker checklist: today's checks grouped by equipment, overdue ones still in their window,
 /// and what's coming up this week. Tick or swipe to complete; report problems inline.
@@ -41,6 +42,11 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
       ];
 
   Future<void> _toggle(CheckTask t, {bool fromSwipe = false}) async {
+    if (t.isPm) {
+      // PM sheets are completed point by point on their own screen.
+      await context.push('/checks/task/${t.id}');
+      return;
+    }
     final done = !t.isDone;
     HapticFeedback.selectionClick();
     setState(() => _pending[t.id] = done ? TaskStatus.done : TaskStatus.pending);
@@ -66,7 +72,10 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(checkTasksProvider(null));
+    final canVerify = ref.watch(profileProvider).role.isManagerOrAdmin;
+    final toVerify = canVerify ? (ref.watch(awaitingVerificationProvider).value ?? const <CheckTask>[]) : const <CheckTask>[];
     Future<void> refresh() async {
+      ref.invalidate(awaitingVerificationProvider);
       ref.invalidate(checkTasksProvider(null));
       await ref.read(checkTasksProvider(null).future);
     }
@@ -91,6 +100,7 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
               ChecksTab.today => todays,
               ChecksTab.overdue => overdue,
               ChecksTab.upcoming => upcoming,
+              ChecksTab.verify => toVerify,
             };
 
             return Column(
@@ -104,7 +114,8 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
                 const Gap(Space.xl),
                 _Tabs(
                   tab: _tab,
-                  counts: {ChecksTab.today: todays.length - doneToday, ChecksTab.overdue: overdue.length, ChecksTab.upcoming: upcoming.length},
+                  tabs: [ChecksTab.today, ChecksTab.overdue, ChecksTab.upcoming, if (canVerify) ChecksTab.verify],
+                  counts: {ChecksTab.today: todays.length - doneToday, ChecksTab.overdue: overdue.length, ChecksTab.upcoming: upcoming.length, ChecksTab.verify: toVerify.length},
                   onChanged: (t) => setState(() => _tab = t),
                 ),
                 const Gap(Space.lg),
@@ -118,10 +129,13 @@ class _MyChecksScreenState extends ConsumerState<MyChecksScreen> {
                         ),
                       ChecksTab.overdue => const EmptyState(icon: Icons.verified_outlined, title: 'Nothing overdue', message: 'Weekly and monthly checks that slip past their day show up here until their window closes.'),
                       ChecksTab.upcoming => const EmptyState(icon: Icons.event_available_outlined, title: 'Nothing coming up', message: 'Checks for the next 7 days will appear here.'),
+                      ChecksTab.verify => const EmptyState(icon: Icons.verified_outlined, title: 'Nothing to verify', message: 'PM check sheets submitted by workers appear here for your in-charge sign-off.'),
                     },
                   )
                 else if (_tab == ChecksTab.upcoming)
                   ..._byDay(context, upcoming)
+                else if (_tab == ChecksTab.verify)
+                  ..._byEquipment(list, readOnly: true)
                 else
                   ..._byEquipment(list, readOnly: false),
               ],
@@ -208,21 +222,22 @@ class _SummaryCard extends StatelessWidget {
 }
 
 class _Tabs extends StatelessWidget {
-  const _Tabs({required this.tab, required this.counts, required this.onChanged});
+  const _Tabs({required this.tab, required this.tabs, required this.counts, required this.onChanged});
   final ChecksTab tab;
+  final List<ChecksTab> tabs;
   final Map<ChecksTab, int> counts;
   final ValueChanged<ChecksTab> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    String label(ChecksTab t) => switch (t) { ChecksTab.today => 'Today', ChecksTab.overdue => 'Overdue', ChecksTab.upcoming => 'Upcoming' };
+    String label(ChecksTab t) => switch (t) { ChecksTab.today => 'Today', ChecksTab.overdue => 'Overdue', ChecksTab.upcoming => 'Upcoming', ChecksTab.verify => 'Verify' };
     return SizedBox(
       width: double.infinity,
       child: SegmentedButton<ChecksTab>(
         showSelectedIcon: false,
         style: SegmentedButton.styleFrom(minimumSize: const Size(0, 44)),
         segments: [
-          for (final t in ChecksTab.values)
+          for (final t in tabs)
             ButtonSegment(
               value: t,
               label: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -321,22 +336,23 @@ class _CheckTile extends StatelessWidget {
     final t = task;
     final overdue = t.isOverdue(today());
     final meta = <String>[
-      t.frequency.label,
+      t.frequencyText,
+      if (t.isPm) '${t.pointCount} points${t.pmType != null ? ' · ${t.pmType!.trim().toLowerCase()}' : ''}',
       if (overdue) 'due ${formatDayShort(t.dueDate)} · until ${formatDayShort(t.windowEnd)}',
       if (t.isDone && t.completedAt != null) 'done ${DateFormat.Hm().format(t.completedAt!)}${t.completedByName != null ? ' by ${t.completedByName}' : ''}',
     ];
 
     final tile = InkWell(
-      onTap: onToggle == null ? null : () => onToggle!(t),
+      onTap: t.isPm ? () => context.push('/checks/task/${t.id}') : (onToggle == null ? null : () => onToggle!(t)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 60),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.xs, Space.sm),
           child: Row(children: [
-            if (onToggle != null)
+            if (onToggle != null || (t.isPm && t.isDone))
               _CheckCircle(done: t.isDone)
             else
-              Icon(Icons.schedule_rounded, size: 22, color: p.muted),
+              Icon(t.isPm ? Icons.fact_check_outlined : Icons.schedule_rounded, size: 22, color: p.muted),
             const Gap(Space.lg),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -368,20 +384,28 @@ class _CheckTile extends StatelessWidget {
                 ],
               ]),
             ),
-            IconButton(
-              tooltip: 'Report a problem',
-              icon: Icon(Icons.report_gmailerrorred_rounded, color: p.muted, size: 22),
-              onPressed: () async {
-                final ok = await showReportFindingSheet(context, equipmentId: t.equipmentId, equipmentName: t.equipmentName, checkTaskId: t.id, checkTitle: t.title);
-                if (ok && context.mounted) showToast(context, 'Finding saved');
-              },
-            ),
+            if (t.isPm && t.isDone)
+              Padding(
+                padding: const EdgeInsets.only(left: Space.xs),
+                child: t.isVerified ? Pill('Verified', color: p.success, icon: Icons.verified_rounded) : Pill('To verify', color: p.primary),
+              ),
+            if (t.isPm)
+              Icon(Icons.chevron_right_rounded, color: p.muted)
+            else
+              IconButton(
+                tooltip: 'Report a problem',
+                icon: Icon(Icons.report_gmailerrorred_rounded, color: p.muted, size: 22),
+                onPressed: () async {
+                  final ok = await showReportFindingSheet(context, equipmentId: t.equipmentId, equipmentName: t.equipmentName, checkTaskId: t.id, checkTitle: t.title);
+                  if (ok && context.mounted) showToast(context, 'Finding saved');
+                },
+              ),
           ]),
         ),
       ),
     );
 
-    if (onToggle == null || t.isDone) return tile;
+    if (onToggle == null || t.isDone || t.isPm) return tile;
     return Dismissible(
       key: ValueKey('swipe-${t.id}'),
       direction: DismissDirection.startToEnd,
