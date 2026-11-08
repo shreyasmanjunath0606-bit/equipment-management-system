@@ -517,8 +517,19 @@ PmCheck? _parseTab(String tab, _Sheet s, List<_Anchor> anchors, Map<String, PmPi
   final cpCol = cols[_Col.checkPoint];
   if (cpCol == null) return null;
 
-  // Title: first text in the rows above the header block.
+  // Title: the banner across the top (a cell merged over many columns, e.g. A1:V1); otherwise the
+  // first text above the header block that is not a label.
   String title = '';
+  for (var r = 1; r < headerRow && title.isEmpty; r++) {
+    for (final c in ((s.cells[r]?.keys.toList() ?? <int>[])..sort())) {
+      final m = s.mergeAt(r, c);
+      final t = s.raw(r, c)!.text;
+      if (m != null && m.r1 == r && m.c1 == c && m.c2 - m.c1 >= 4 && !_legend.contains(_norm(t)) && _norm(t) != 'X') {
+        title = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+        break;
+      }
+    }
+  }
   for (var r = 1; r < headerRow && title.isEmpty; r++) {
     final row = s.cells[r];
     if (row == null) continue;
@@ -583,7 +594,10 @@ PmCheck? _parseTab(String tab, _Sheet s, List<_Anchor> anchors, Map<String, PmPi
           check.kanbanNo ??= right(r, c);
         case _Label.equipment:
           consumed.add(key(r, c));
-          check.equipmentLabel ??= t.replaceAll(RegExp(r'[:\s]+$'), '').replaceAll(RegExp(r'^EQUIPMENT\s*', caseSensitive: false), '').trim();
+          check.equipmentLabel ??= t
+              .replaceFirst(RegExp(r'^\s*(EQUIPMENTS?|EQUIP|EQIP|EQPT|EQP)\b[\s.:]*', caseSensitive: false), '')
+              .replaceAll(RegExp(r'[:\s]+$'), '')
+              .trim();
           check.equipmentNo ??= right(r, c);
         case _Label.column:
           consumed.add(key(r, c));
@@ -702,16 +716,19 @@ PmCheck? _parseTab(String tab, _Sheet s, List<_Anchor> anchors, Map<String, PmPi
 
 enum _Label { frequency, pmType, manPower, time, rank, kanban, equipment, column }
 
+final _equipmentWord = RegExp(r'^(EQUIPMENT|EQUIPMENTS|EQUIP|EQIP|EQPT|EQP)\b');
+
 _Label? _labelKind(String text) {
   final s = _norm(text);
   if (s.isEmpty) return null;
   if (s == 'FREQUENCY' || s == 'FREQ' || s == 'CHECK FREQUENCY' || s == 'PM FREQUENCY') return _Label.frequency;
   if (s == 'PM TYPE' || s == 'TYPE') return _Label.pmType;
   if (s.startsWith('MAN POWER') || s.startsWith('MANPOWER')) return _Label.manPower;
-  if (s.startsWith('TIME')) return _Label.time;
-  if (s.contains('PM RANK') && s.contains('EQUIPMENT')) return _Label.rank;
+  if (RegExp(r'^TIME\b').hasMatch(s)) return _Label.time; // "TIME MINTS", not a title like "TIMER PM"
+  if (s.contains('PM RANK') && _equipmentWord.hasMatch(s)) return _Label.rank;
   if (s.startsWith('KANBAN')) return _Label.kanban;
-  if (s.startsWith('EQUIPMENT') && (s.contains(' NO') || text.trim().endsWith(':'))) return _Label.equipment;
+  // "EQUIPMENT PSW ALP GUN NO:", "EQIP PSW GUN:ALP", "EQUIP NO", ...
+  if (_equipmentWord.hasMatch(s) && !s.contains('RANK')) return _Label.equipment;
   if (_columnFor(text) != null) return _Label.column;
   return null;
 }
