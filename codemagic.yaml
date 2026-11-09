@@ -1,0 +1,64 @@
+# Codemagic CI: builds the Flutter app for iOS on a cloud Mac and uploads it to TestFlight.
+# One-time setup is described in flutter_app/README.md, under "iOS builds (Codemagic)".
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: flutter_app
+
+    integrations:
+      # Must match the name given to the App Store Connect API key in
+      # Codemagic → Team settings → Integrations → Developer Portal.
+      app_store_connect: Equipment Portal ASC key
+
+    environment:
+      flutter: 3.47.9 # keep in step with tool/vercel_build.sh and the local version
+      xcode: latest
+      cocoapods: default
+      groups:
+        - supabase # SUPABASE_URL, SUPABASE_ANON_KEY, SITE_URL
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.equipmentportal.equipmentPortal
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+      cancel_previous_builds: true
+
+    when:
+      changeset:
+        includes:
+          - 'flutter_app/**'
+          - 'codemagic.yaml'
+
+    scripts:
+      - name: Check environment variables
+        script: |
+          : "${SUPABASE_URL:?Add SUPABASE_URL to the 'supabase' environment group in Codemagic}"
+          : "${SUPABASE_ANON_KEY:?Add SUPABASE_ANON_KEY to the 'supabase' environment group in Codemagic}"
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Get packages
+        script: flutter pub get
+      - name: Build IPA
+        script: |
+          flutter build ipa --release \
+            --build-number="$BUILD_NUMBER" \
+            --export-options-plist=/Users/builder/export_options.plist \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+            --dart-define=SITE_URL="${SITE_URL:-}"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
