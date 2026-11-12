@@ -53,7 +53,11 @@ App icons are generated from `assets/icon/` with `dart run flutter_launcher_icon
 - **Database migrations** in `../supabase/migrations/`. The checks, findings and reminders schema is `20261108000001_checks_findings.sql`. One worker per equipment, and the Daily / Weekly / Monthly workbook slots, are in `20261110000001_worker_equipment_assignment.sql`: managers set them up under **Assignments**, and a worker only sees the checks of the equipment assigned to them.
 - **Edge Function `admin-users`** in `../supabase/functions/admin-users/`. It handles inviting and deactivating users. Deploy it with:
   `supabase functions deploy admin-users`
+  Then set the secret that limits which websites may call it and where invite links may return:
+  `supabase secrets set ALLOWED_ORIGINS=https://your-app.vercel.app` (comma-separated if there are several).
 - **Supabase → Authentication → URL Configuration.** Add the web app's URL and `com.equipmentportal.app://auth-callback` to the redirect URLs.
+- **Supabase → Authentication → Sign In / Providers.** Turn off "Allow new users to sign up" (invites still work), and turn on leaked-password protection.
+- **Security hardening** is in `20261112000001_security_hardening.sql`. It covers: failure photos visible only within the plant, findings changeable only by managers and the reporter, status reports no more than 7 days old, verified checks fully locked, and capped stats ranges.
 
 ## Tests
 
