@@ -4,16 +4,27 @@
 // The caller's JWT is verified and must belong to an active admin (public.is_admin()).
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+// ALLOWED_ORIGINS (function secret): comma-separated web origins of the app, e.g.
+// "https://your-app.vercel.app". Browsers on other sites are refused, and invite links may only
+// return to these origins or the mobile app. Unset = any origin (the old behaviour).
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
+  .split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean);
+const MOBILE_REDIRECT = "com.equipmentportal.app://auth-callback";
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+const redirectAllowed = (to: string) =>
+  allowedOrigins.length === 0 || to.startsWith(MOBILE_REDIRECT) ||
+  allowedOrigins.some((o) => to === o || to.startsWith(o + "/"));
 
 Deno.serve(async (req) => {
+  const origin = req.headers.get("Origin") ?? "";
+  const cors = {
+    "Access-Control-Allow-Origin": allowedOrigins.length === 0 ? "*" : (allowedOrigins.includes(origin) ? origin : allowedOrigins[0]),
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
@@ -46,13 +57,18 @@ Deno.serve(async (req) => {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !name || !["worker", "manager", "admin"].includes(role)) {
       return json({ error: "Name, a valid email and a role are required" }, 400);
     }
+    if (redirectTo !== undefined && !redirectAllowed(redirectTo)) {
+      return json({ error: "Invite links can only return to this app" }, 400);
+    }
     // The invite row must exist first: the DB trigger only creates profiles for invited emails.
-    await asCaller.from("invites").delete().ilike("email", email).is("used_at", null);
+    await asCaller.from("invites").delete().eq("email", email).is("used_at", null);
     const { error: invErr } = await asCaller.from("invites").insert({ email, name, role, plant_ids: plantIds, invited_by: user.id });
     if (invErr) return json({ error: invErr.message }, 400);
 
     const { error } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo });
     if (error) {
+      // Don't leave an unused invite lying around for 7 days.
+      await asCaller.from("invites").delete().eq("email", email).is("used_at", null);
       const exists = /already been registered|already exists/i.test(error.message);
       return json({ error: exists ? "This email already has an account." : error.message }, 400);
     }
